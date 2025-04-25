@@ -1,4 +1,4 @@
-package com.deployproject.deploy.domain
+package com.deployproject.deploy.domain.deployUser
 
 import jakarta.persistence.*
 import lombok.*
@@ -10,7 +10,7 @@ import java.time.LocalDateTime
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-class deployUser {
+class DeployUser {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
