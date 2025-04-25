@@ -1,0 +1,16 @@
+name: deployProject
+
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver
+    url: jdbc:mysql://backjin.iptime.org:3306/deployDB
+    username: deployMan
+    password: deploy123
+  jpa:
+      show-sql: true
+      hibernate:
+          ddl-auto: update
+  jooq:
+    sql-dialect: MYSQL
+
