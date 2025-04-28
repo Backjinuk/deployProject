@@ -13,6 +13,8 @@ open class SiteDto {
 
     var text: String? = null
 
+    var userSeq: Long? = null
+
     /** 운영 서버 홈 디렉토리 */
     var homePath: String? = null
 
@@ -42,6 +44,10 @@ open class SiteDto {
 
     /** 사용자의 로컬 디렉토리 경로 */
     var localPath: String? = null
+
+    var field : String? = null
+
+    var value: String? = null
 
     var createdAt: LocalDateTime? = LocalDateTime.now()
 
