@@ -52,4 +52,6 @@ open class SiteDto {
     var createdAt: LocalDateTime? = LocalDateTime.now()
 
     var updatedAt: LocalDateTime? = null
+
+    var useYn : String? = null
 }

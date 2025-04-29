@@ -12,6 +12,4 @@ interface DeployRepository {
     fun getPathList(userSeq: Long): List<SiteDto>
     fun updatePath(site : Site)
     fun savedPath(site: Site)
-
-
 }

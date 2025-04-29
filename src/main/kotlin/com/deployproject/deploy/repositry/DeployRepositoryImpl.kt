@@ -20,7 +20,7 @@ class DeployRepositoryImpl(
 ) : DeployRepository {
 
     override fun getSites(id: Long): List<SiteDto> {
-        val query = entityManager.createQuery("SELECT s FROM Site s where s.userSeq = :id", Site::class.java)
+        val query = entityManager.createQuery("SELECT s FROM Site s where s.userSeq = :id and useYn != 'N' ", Site::class.java)
         query.setParameter("id", id)
 
         return query.resultList.map { site ->
@@ -44,19 +44,22 @@ class DeployRepositoryImpl(
     }
 
     override fun getPathList(userSeq: Long): List<SiteDto> {
-        val query = entityManager.createQuery("SELECT s FROM Site s WHERE s.userSeq = :userSeq", Site::class.java)
+        val query = entityManager.createQuery(
+            "SELECT s " +
+                    "FROM Site s " +
+                    "WHERE s.userSeq = :userSeq " +
+                    "and s.useYn != 'N' or s.useYn is null ",
+            Site::class.java)
         query.setParameter("userSeq", userSeq)
 
         return query.resultList.map { site ->
             modelMapper.map(site, SiteDto::class.java)
         }
-
     }
 
     @Transactional
     override fun updatePath(site: Site) {
 
-        // 2) non-null 필드만 모아서 JPQL SET 절 동적 생성
         val assignments = mutableListOf<String>().apply {
             site.text     ?.let { add("s.text      = :text") }
             site.homePath ?.let { add("s.homePath  = :homePath") }
@@ -69,6 +72,7 @@ class DeployRepositoryImpl(
             site.jspNew   ?.let { add("s.jspNew    = :jspNew") }
             site.scriptOld?.let { add("s.scriptOld = :scriptOld") }
             site.scriptNew?.let { add("s.scriptNew = :scriptNew") }
+            site.useYn    ?.let { add("s.useYn = :useYn")}
         }
 
         // 수정할 필드가 없으면 바로 종료
@@ -81,14 +85,8 @@ class DeployRepositoryImpl(
             append(" WHERE s.id = :id")
         }
 
-
-        println("jpql = ${jpql}")
-
         // 4) Query 생성 및 파라미터 바인딩
         val query = entityManager.createQuery(jpql)
-
-        println("site.homePath = ${site.homePath}")
-
         site.id       ?.let { query.setParameter("id", it) }
         site.text     ?.let { query.setParameter("text",      it) }
         site.homePath ?.let { query.setParameter("homePath",  it) }
@@ -101,6 +99,7 @@ class DeployRepositoryImpl(
         site.jspNew   ?.let { query.setParameter("jspNew",    it) }
         site.scriptOld?.let { query.setParameter("scriptOld", it) }
         site.scriptNew?.let { query.setParameter("scriptNew", it) }
+        site.useYn    ?.let { query.setParameter("useYn", it) }
 
         // 5) 쿼리 실행
         query.executeUpdate()

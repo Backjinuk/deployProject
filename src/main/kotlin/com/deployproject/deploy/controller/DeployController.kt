@@ -16,11 +16,6 @@ class DeployController(
     private val deployService: DeployService
 ) {
 
-    @RequestMapping("/api/hello")
-    fun hello(): String {
-        return "Hello, World!"
-    }
-
     @RequestMapping("/api/sites")
     fun getSites(@RequestBody deployUserDto : DeployUserDto): List<SiteDto> {
         println("getSites " + deployUserDto.id)
@@ -69,5 +64,10 @@ class DeployController(
 
         deployService.savedPath(siteDto)
 
+    }
+
+    @RequestMapping("/api/deletePath")
+    fun deletePath(@RequestBody siteDto : SiteDto) {
+        deployService.updatePath(siteDto)
     }
 }

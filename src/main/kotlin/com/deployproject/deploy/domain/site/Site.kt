@@ -69,4 +69,6 @@ class Site {
     @Column(name = "updated_at")
     var updatedAt: LocalDateTime? = null
 
+    @Column(name =  "use_yn", length = 1)
+    var useYn: String? = null
 }
