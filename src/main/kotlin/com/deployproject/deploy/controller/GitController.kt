@@ -58,6 +58,11 @@ class GitController {
                     println("Commit: ${commit.name}")
                     println("Author: ${commit.authorIdent.name}")
                     println("Date:   ${commit.authorIdent.`when`}")
+                    println("Date:   ${commit.authorIdent.`when`}")
+                    println("Date:   ${commit.authorIdent.`when`}")
+                    println("Date:   ${commit.authorIdent.`when`}")
+                    println("Date:   ${commit.authorIdent.`when`}")
+                    println("Date:   ${commit.authorIdent.`when`}")
 
                     val parentCommit = commit.parents.firstOrNull()?.let {
                         revWalk.parseCommit(it.id)

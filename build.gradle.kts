@@ -1,10 +1,15 @@
+// build.gradle.kts
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
 plugins {
     kotlin("jvm") version "1.9.25"
     kotlin("plugin.spring") version "1.9.25"
-    war
+    kotlin("plugin.jpa") version "1.9.25"
     id("org.springframework.boot") version "3.4.4"
     id("io.spring.dependency-management") version "1.1.7"
-    kotlin("plugin.jpa") version "1.9.25"
+    application
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 group = "com"
@@ -12,13 +17,7 @@ version = "0.0.1-SNAPSHOT"
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
-    }
-}
-
-configurations {
-    compileOnly {
-        extendsFrom(configurations.annotationProcessor.get())
+        languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
 
@@ -33,35 +32,46 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
-    // https://mvnrepository.com/artifact/org.eclipse.jgit/org.eclipse.jgit
+    compileOnly("org.projectlombok:lombok")
+    annotationProcessor("org.projectlombok:lombok")
+
+    testCompileOnly("org.projectlombok:lombok")
+    testAnnotationProcessor("org.projectlombok:lombok")
+
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.7.0.202309050840-r")
-    // https://mvnrepository.com/artifact/org.tmatesoft.svnkit/svnkit
     implementation("org.tmatesoft.svnkit:svnkit:1.10.11")
 
     implementation("org.modelmapper:modelmapper:3.1.1")
+    runtimeOnly("com.mysql:mysql-connector-j")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-
-    compileOnly("org.projectlombok:lombok")
-    developmentOnly("org.springframework.boot:spring-boot-devtools")
-    runtimeOnly("com.mysql:mysql-connector-j")
-    annotationProcessor("org.projectlombok:lombok")
-    providedRuntime("org.springframework.boot:spring-boot-starter-tomcat")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-kotlin {
-    compilerOptions {
-        freeCompilerArgs.addAll("-Xjsr305=strict")
+// The 'application' plugin is applied, but we configure the Main-Class in the Shadow JAR manifest
+// No need for an application { mainClass.set(...) } block here
+
+tasks.withType<KotlinCompile> {
+    kotlinOptions.jvmTarget = "21"
+}
+
+// Shadow JAR configuration, including manifest Main-Class
+tasks.named<ShadowJar>("shadowJar") {
+    archiveBaseName.set("deploy-project-cli")
+    archiveClassifier.set("")
+    archiveVersion.set(project.version.toString())
+    manifest {
+        attributes(
+            "Main-Class" to "com.deployproject.util.DeployProjectApplicationKt"
+        )
     }
 }
 
-allOpen {
-    annotation("jakarta.persistence.Entity")
-    annotation("jakarta.persistence.MappedSuperclass")
-    annotation("jakarta.persistence.Embeddable")
-}
+// Disable Spring Boot's default packaging tasks
+tasks.named("bootJar") { enabled = false }
+
+// Ensure the shadowJar is built as part of the standard build
+tasks.named("build") { dependsOn(tasks.named("shadowJar")) }
 
 tasks.withType<Test> {
     useJUnitPlatform()

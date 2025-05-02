@@ -55,13 +55,6 @@ class DeployController(
 
     @RequestMapping("/api/savedPath")
     fun savedPath(@RequestBody siteDto : SiteDto) {
-
-        println("siteDto = ${siteDto}")
-
-        println("siteDto.id = ${siteDto.id}")
-        println("siteDto.homePath = ${siteDto.homePath}")
-        println("siteDto.localPath = ${siteDto.localPath}")
-
         deployService.savedPath(siteDto)
 
     }

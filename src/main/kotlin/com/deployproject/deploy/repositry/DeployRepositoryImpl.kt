@@ -20,12 +20,20 @@ class DeployRepositoryImpl(
 ) : DeployRepository {
 
     override fun getSites(id: Long): List<SiteDto> {
-        val query = entityManager.createQuery("SELECT s FROM Site s where s.userSeq = :id and useYn != 'N' ", Site::class.java)
+        val query = entityManager.createQuery(
+            "SELECT s " +
+                    "FROM Site s " +
+                    "where s.userSeq = :id " +
+                    "and useYn != 'N'  or useYn IS NULL",
+            Site::class.java)
+
         query.setParameter("id", id)
 
-        return query.resultList.map { site ->
+        val map = query.resultList.map { site ->
             modelMapper.map(site, SiteDto::class.java)
         }
+
+        return map
     }
 
     override fun findByUserName(userName: String): DeployUserDto {
@@ -64,14 +72,6 @@ class DeployRepositoryImpl(
             site.text     ?.let { add("s.text      = :text") }
             site.homePath ?.let { add("s.homePath  = :homePath") }
             site.localPath?.let { add("s.localPath = :localPath") }
-            site.javaOld  ?.let { add("s.javaOld   = :javaOld") }
-            site.javaNew  ?.let { add("s.javaNew   = :javaNew") }
-            site.xmlOld   ?.let { add("s.xmlOld    = :xmlOld") }
-            site.xmlNew   ?.let { add("s.xmlNew    = :xmlNew") }
-            site.jspOld   ?.let { add("s.jspOld    = :jspOld") }
-            site.jspNew   ?.let { add("s.jspNew    = :jspNew") }
-            site.scriptOld?.let { add("s.scriptOld = :scriptOld") }
-            site.scriptNew?.let { add("s.scriptNew = :scriptNew") }
             site.useYn    ?.let { add("s.useYn = :useYn")}
         }
 
@@ -91,14 +91,6 @@ class DeployRepositoryImpl(
         site.text     ?.let { query.setParameter("text",      it) }
         site.homePath ?.let { query.setParameter("homePath",  it) }
         site.localPath?.let { query.setParameter("localPath", it) }
-        site.javaOld  ?.let { query.setParameter("javaOld",   it) }
-        site.javaNew  ?.let { query.setParameter("javaNew",   it) }
-        site.xmlOld   ?.let { query.setParameter("xmlOld",    it) }
-        site.xmlNew   ?.let { query.setParameter("xmlNew",    it) }
-        site.jspOld   ?.let { query.setParameter("jspOld",    it) }
-        site.jspNew   ?.let { query.setParameter("jspNew",    it) }
-        site.scriptOld?.let { query.setParameter("scriptOld", it) }
-        site.scriptNew?.let { query.setParameter("scriptNew", it) }
         site.useYn    ?.let { query.setParameter("useYn", it) }
 
         // 5) 쿼리 실행
