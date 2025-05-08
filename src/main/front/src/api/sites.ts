@@ -16,6 +16,3 @@ export interface Site {
     localPath: string;
 }
 
-const api = axios.create({ baseURL: '/api' });
-
-export const fetchSites = () => api.get<Site[]>('/sites');

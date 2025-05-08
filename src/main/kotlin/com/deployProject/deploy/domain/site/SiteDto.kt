@@ -1,8 +1,5 @@
-package com.deployproject.deploy.domain.site
+package com.deployProject.deploy.domain.site
 
-import jakarta.persistence.Column
-import jakarta.persistence.PrePersist
-import jakarta.persistence.PreUpdate
 import lombok.Data
 import java.time.LocalDateTime
 

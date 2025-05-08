@@ -1,10 +1,10 @@
-package com.deployproject.deploy.service
+package com.deployProject.deploy.service
 
-import com.deployproject.deploy.domain.deployUser.DeployUser
-import com.deployproject.deploy.domain.deployUser.DeployUserDto
-import com.deployproject.deploy.domain.site.Site
-import com.deployproject.deploy.domain.site.SiteDto
-import com.deployproject.deploy.repositry.DeployRepository
+import com.deployProject.deploy.domain.deployUser.DeployUser
+import com.deployProject.deploy.domain.deployUser.DeployUserDto
+import com.deployProject.deploy.domain.site.Site
+import com.deployProject.deploy.domain.site.SiteDto
+import com.deployProject.deploy.repositry.DeployRepository
 import jakarta.transaction.Transactional
 import org.modelmapper.ModelMapper
 import org.springframework.stereotype.Service

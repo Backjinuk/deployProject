@@ -1,4 +1,4 @@
-package com.deployproject.config
+package com.deployProject.config
 
 import org.modelmapper.Conditions
 import org.modelmapper.ModelMapper

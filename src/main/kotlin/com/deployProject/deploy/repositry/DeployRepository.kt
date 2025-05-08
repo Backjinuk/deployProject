@@ -1,9 +1,9 @@
-package com.deployproject.deploy.repositry
+package com.deployProject.deploy.repositry
 
-import com.deployproject.deploy.domain.deployUser.DeployUser
-import com.deployproject.deploy.domain.deployUser.DeployUserDto
-import com.deployproject.deploy.domain.site.Site
-import com.deployproject.deploy.domain.site.SiteDto
+import com.deployProject.deploy.domain.deployUser.DeployUser
+import com.deployProject.deploy.domain.deployUser.DeployUserDto
+import com.deployProject.deploy.domain.site.Site
+import com.deployProject.deploy.domain.site.SiteDto
 
 interface DeployRepository {
     fun getSites(id: Long): List<SiteDto>

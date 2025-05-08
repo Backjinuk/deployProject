@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react";
-import {fetchSites, Site} from "../../api/sites";
+import { Site} from "../../api/sites";
 import PathConverter from "./PathConverter";
 import SiteSelector from "./StieSelector";
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -28,7 +28,10 @@ const ConverterMain = () => {
 
     const fetchData = ( deployUser : any) => {
         axios.post("/api/sites", deployUser)
-            .then((res) => { setSites(res.data) });
+            .then((res) => {
+                console.log(res.data)
+                setSites(res.data)
+            });
 
     }
     const savedNick = (nick: string) => {

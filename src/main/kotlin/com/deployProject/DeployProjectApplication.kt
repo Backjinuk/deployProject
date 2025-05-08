@@ -1,4 +1,4 @@
-package com.deployproject
+package com.deployProject
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication

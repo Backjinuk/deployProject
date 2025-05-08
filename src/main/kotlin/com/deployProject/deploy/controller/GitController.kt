@@ -1,4 +1,4 @@
-package com.deployproject.deploy.controller
+package com.deployProject.deploy.controller
 
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.Status

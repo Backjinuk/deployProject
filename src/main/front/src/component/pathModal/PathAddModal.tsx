@@ -31,11 +31,13 @@ export default function PathAddModal({show, onPathAdd}: { show: boolean; onPathA
         jspNew: "",
         scriptOld: "",
         scriptNew: "",
-        userSeq: JSON.parse(localStorage.getItem('deployUser') || "").id,
+        userSeq: JSON.parse(localStorage.getItem('deployUser') || "{}").id || "",
     });
 
 
     const savedPath = () => {
+
+        alert(111);
         axios.post('/api/savedPath', form).then( () => {
             Swal.fire({
                 position: "center",

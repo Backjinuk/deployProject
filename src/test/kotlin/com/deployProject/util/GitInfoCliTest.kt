@@ -1,8 +1,6 @@
-package com.deployproject.util
+package com.deployProject.util
 
-import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import org.springframework.data.util.StreamUtils.zip
 import java.io.File
 import java.util.zip.ZipFile
 import kotlin.test.assertTrue
@@ -10,7 +8,7 @@ import kotlin.test.fail
 
 class GitInfoCliTest {
 
-    private val repoGitDir = File("/Users/mac/IdeaProjects/deployProject/.git")
+    private val repoGitDir = File("D:/DevSpace/deployProject/.git")
 
     @Test
     fun `프로젝트 저장소의 상태 파일은 비어 있지 않아야 한다`(){
@@ -40,7 +38,12 @@ class GitInfoCliTest {
     @Test
     fun `diff 파일은 README 또는 다른 프로젝트 파일을 포함해야 한다`() {
         // Run CLI again to ensure ZIP exists
-        GitInfoCli.main(arrayOf(repoGitDir.absolutePath))
+
+        val since = ""
+        val until = ""
+        val filestatus = "STATUS"
+
+        GitInfoCli.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus))
     }
 
     @Test
@@ -60,6 +63,14 @@ class GitInfoCliTest {
 
             assertTrue(content.isNotEmpty(), "Expected non-empty status.txt for project repository")
         }
+    }
+
+
+
+    @Test
+    fun `Jar파일 생성 테스트`() {
+        JarCreator.main( arrayOf())
+
     }
 
 }

@@ -1,4 +1,4 @@
-package com.deployproject.deploy.domain.deployUser
+package com.deployProject.deploy.domain.deployUser
 
 import jakarta.persistence.*
 import lombok.*

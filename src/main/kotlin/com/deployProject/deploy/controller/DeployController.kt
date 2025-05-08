@@ -1,8 +1,8 @@
-package com.deployproject.deploy.controller
+package com.deployProject.deploy.controller
 
-import com.deployproject.deploy.domain.deployUser.DeployUserDto
-import com.deployproject.deploy.domain.site.SiteDto
-import com.deployproject.deploy.service.DeployService
+import com.deployProject.deploy.domain.deployUser.DeployUserDto
+import com.deployProject.deploy.domain.site.SiteDto
+import com.deployProject.deploy.service.DeployService
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping

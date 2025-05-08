@@ -21,40 +21,43 @@ const PathConverter: React.FC<Props> = ({site}) => {
 
     // 변환 로직
     const convert = () => {
-        const lines = input.split('\n').filter(Boolean);
-        const now = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const bArr: string[] = [];
-        const dArr: string[] = [];
-        const rArr: string[] = [];
 
-        lines.forEach(item => {
-            let out1 = '', out2 = '', out3 = '';
-            const map: Array<[keyof Site, keyof Site, string, string]> = [['javaOld', 'javaNew', '.java', '.class'], ['xmlOld', 'xmlNew', '', ''], ['jspOld', 'jspNew', '', ''], ['scriptOld', 'scriptNew', '', '']];
 
-            for (const [oldKey, newKey, extOld, extNew] of map) {
-                const oldVal = site[oldKey] as string;
-                const newVal = site[newKey] as string;
-                if (oldVal && item.startsWith(oldVal)) {
-                    const file = item.substring(item.lastIndexOf('/') + 1);
-                    // 백업용
-                    out1 = `cd ${oldVal}; cp ${file.replace(extOld, extNew)} ${file.replace(extOld, extNew)}${now}`;
-                    // 배포용
-                    out2 = `cp ${site.homePath}${now}/${file.replace(extOld, extNew)} ${newVal}${file.replace(extOld, extNew)}`;
-                    // 원복용 (swap)
-                    const parts = out1.split(' ');
-                    [parts[parts.length - 2], parts[parts.length - 1]] = [parts[parts.length - 1], parts[parts.length - 2]];
-                    out3 = parts.join(' ');
-                    break;
-                }
-            }
-            bArr.push(out1);
-            dArr.push(out2);
-            rArr.push(out3);
-        });
 
-        setResults({
-            backup: bArr.join('\n'), deploy: dArr.join('\n'), restore: rArr.join('\n')
-        });
+        // const lines = input.split('\n').filter(Boolean);
+        // const now = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        // const bArr: string[] = [];
+        // const dArr: string[] = [];
+        // const rArr: string[] = [];
+        //
+        // lines.forEach(item => {
+        //     let out1 = '', out2 = '', out3 = '';
+        //     const map: Array<[keyof Site, keyof Site, string, string]> = [['javaOld', 'javaNew', '.java', '.class'], ['xmlOld', 'xmlNew', '', ''], ['jspOld', 'jspNew', '', ''], ['scriptOld', 'scriptNew', '', '']];
+        //
+        //     for (const [oldKey, newKey, extOld, extNew] of map) {
+        //         const oldVal = site[oldKey] as string;
+        //         const newVal = site[newKey] as string;
+        //         if (oldVal && item.startsWith(oldVal)) {
+        //             const file = item.substring(item.lastIndexOf('/') + 1);
+        //             // 백업용
+        //             out1 = `cd ${oldVal}; cp ${file.replace(extOld, extNew)} ${file.replace(extOld, extNew)}${now}`;
+        //             // 배포용
+        //             out2 = `cp ${site.homePath}${now}/${file.replace(extOld, extNew)} ${newVal}${file.replace(extOld, extNew)}`;
+        //             // 원복용 (swap)
+        //             const parts = out1.split(' ');
+        //             [parts[parts.length - 2], parts[parts.length - 1]] = [parts[parts.length - 1], parts[parts.length - 2]];
+        //             out3 = parts.join(' ');
+        //             break;
+        //         }
+        //     }
+        //     bArr.push(out1);
+        //     dArr.push(out2);
+        //     rArr.push(out3);
+        // });
+        //
+        // setResults({
+        //     backup: bArr.join('\n'), deploy: dArr.join('\n'), restore: rArr.join('\n')
+        // });
     };
 
     // 클립보드 복사 함수
