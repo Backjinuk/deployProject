@@ -8,244 +8,228 @@ import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalDateTime
 import java.time.ZoneId
-import java.util.*
+import java.time.format.DateTimeFormatter
+import java.util.Date
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+/**
+ * GitInfoCli: Git 상태 변경 및 diff 경로를 수집하여 ZIP으로 패키징하는 CLI 유틸리티
+ */
 object GitInfoCli {
-
     private val log = LoggerFactory.getLogger(GitInfoCli::class.java)
-
     private val zippedEntries = mutableSetOf<String>()
 
+    /**
+     * 진입점: <gitDir> [sinceDate] [untilDate] [fileStatusType]
+     */
     @JvmStatic
     fun main(args: Array<String>) {
-        val repoPath = args.getOrNull(0) ?: error("Usage: <gitDir> [sinceDate] [untilDate]")
+        val repoPath = args.getOrNull(0)
+            ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
 
-        log.info("args : ${args.joinToString(",")}")
+        val dateFmt = DateTimeFormatter.ofPattern("yyyy/MM/dd")
+        val since = parseDateArg(args.getOrNull(2), dateFmt)
+        val until = parseDateArg(args.getOrNull(3), dateFmt)
+        val statusType = parseStatusType(args.getOrNull(4))
 
-        val since = args.getOrNull(2)
-            ?.takeIf { it.isBlank() }
-            ?.let {
-                try {
-                    LocalDate.parse(it)
-                } catch (e: Exception) {
-                    LocalDate.now()
-                }
-            }
-            ?: LocalDate.now()
-
-        val until = args.getOrNull(3)
-            ?.takeIf { it.isBlank() }
-            ?.let {
-                try {
-                    LocalDate.parse(it)
-                } catch (e: Exception) {
-                    LocalDate.now()
-                }
-            }
-            ?: LocalDate.now()
-
-        val fileStatusType = args.getOrNull(4  )
-            ?.let {
-                try{ FileStatusType.valueOf(it)
-                } catch (e: Exception) {
-                    FileStatusType.ALL
-                }
-            }
-            ?: FileStatusType.ALL
-
-        run (repoPath, since, until, fileStatusType)
+        run(repoPath, since, until, statusType)
     }
 
-
+    // ───────────────────────────────────────────────────────────
+    // 1) Core Logic
+    // ───────────────────────────────────────────────────────────
     fun run(
         repoPath: String,
         since: LocalDate,
         until: LocalDate,
         fileStatusType: FileStatusType
     ) {
-
         val gitDir = parseGitDir(repoPath)
+        val workTree = gitDir.parentFile
         val outputZip = determineOutputZip(gitDir)
+
         val git = Git.open(gitDir)
         val repo = git.repository
 
-        val statusPaths = collectStatusPaths(git, repoPath, since, until)
+        val statusPaths = collectStatusPaths(git, since, until)
         val diffPaths = collectDiffPaths(repo, since, until)
 
-        val workTree = gitDir.parentFile
-        createZip(outputZip) { zip ->
-            //diffPaths
-            if(fileStatusType == FileStatusType.DIFF || fileStatusType == FileStatusType.ALL) {
-                log.info("diffPaths zip 앞축 시작 : ${LocalDateTime.now()}")
-                addZipFiles(zip, workTree, diffPaths)
-                log.info("diffPaths zip 앞축 종료 : ${LocalDateTime.now()}")
-            }
+        val diffEntries = mapSourcesToClasses(diffPaths, workTree)
+        val statusEntries = mapSourcesToClasses(statusPaths, workTree)
 
-            if (fileStatusType == FileStatusType.STATUS || fileStatusType == FileStatusType.ALL) {
-                log.info("statusPaths zip 앞축 시작 : ${LocalDateTime.now()}")
-                addZipFiles(zip, workTree, statusPaths)
-                log.info("statusPaths zip 앞축 종료 : ${LocalDateTime.now()}")
+        createZip(outputZip) { zip ->
+            if (fileStatusType.allowsDiff()) {
+                addZipFiles(zip, workTree, diffEntries)
+            }
+            if (fileStatusType.allowsStatus()) {
+                addZipFiles(zip, workTree, statusEntries)
             }
         }
-
 
         println("✅ Created ZIP: ${outputZip.absolutePath}")
     }
 
+    // ───────────────────────────────────────────────────────────
+    // 2) Argument Parsing Helpers
+    // ───────────────────────────────────────────────────────────
+    private fun parseDateArg(
+        arg: String?,
+        formatter: DateTimeFormatter
+    ): LocalDate = arg
+        ?.takeIf { it.isNotBlank() }
+        ?.let {
+            try { LocalDate.parse(it, formatter) }
+            catch (e: Exception) { LocalDate.now() }
+        }
+        ?: LocalDate.now()
+
+    private fun parseStatusType(arg: String?): FileStatusType = arg
+        ?.let { value ->
+            try { FileStatusType.valueOf(value) }
+            catch (e: Exception) { FileStatusType.ALL }
+        } ?: FileStatusType.ALL
 
     // ───────────────────────────────────────────────────────────
-    // 1) 인자 검증 & Git 디렉터리 파싱
+    // 3) Repository & Path Utilities
     // ───────────────────────────────────────────────────────────
-    private fun parseGitDir(repoPath : String): File {
-        if (repoPath.isEmpty()) {
-            errorExit("Usage: java -jar git-info-cli.jar <git-dir> [<output-zip-path>]")
+    private fun parseGitDir(repoPath: String): File = File(repoPath).apply {
+        if (!exists() || !File(this, "config").exists()) {
+            error("ERROR: Not a valid Git repository: ${absolutePath}")
         }
-        val gitDir = File(repoPath)
-        if (!gitDir.exists() || !File(gitDir, "config").exists()) {
-            errorExit("ERROR: Not a valid Git repository: ${gitDir.absolutePath}")
-        }
-        return gitDir
     }
 
     private fun determineOutputZip(gitDir: File): File {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-        return File(gitDir.parentFile, "git-info-$timestamp.zip")
-    }
-
-    private fun errorExit(msg: String): Nothing {
-        println(msg)
-        kotlin.system.exitProcess(1)
+        val date = SimpleDateFormat("yyyyMMdd").format(Date())
+        return File(gitDir.parentFile, "$date.zip")
     }
 
     // ───────────────────────────────────────────────────────────
-    // 2) Git status 경로 수집
+    // 4) Git Status & Diff Collection
     // ───────────────────────────────────────────────────────────
-    private fun collectStatusPaths(git: Git, path: String, since: LocalDate, until: LocalDate): List<String> {
-        val workTree = git.repository.workTree       // File 객체
-        val status = git.status().call()
+    private fun collectStatusPaths(
+        git: Git,
+        since: LocalDate,
+        until: LocalDate
+    ): List<String> {
+        val base = git.repository.workTree
+        val dateZone = ZoneId.systemDefault()
 
-        return (status.added + status.changed + status.modified).map { it -> File(workTree, it) }
-            // 실제 있는 파일만 filter
+        return (git.status().call().added
+                + git.status().call().changed
+                + git.status().call().modified)
+            .map { File(base, it) }
             .filter { file ->
-                file.exists().also { exists ->
-                    if (!exists) {
-                        log.warn("File does not exist: $file")
-                    }
-                }
+                file.exists().also { if (!it) log.warn("Missing: $file") }
             }
-
             .filter { file ->
-                val fileDate: LocalDate =
-                    Instant.ofEpochMilli(file.lastModified()).atZone(ZoneId.systemDefault()).toLocalDate()
-
+                val fileDate = Instant.ofEpochMilli(file.lastModified())
+                    .atZone(dateZone).toLocalDate()
                 !fileDate.isBefore(since) && !fileDate.isAfter(until)
-            }.map { it.absolutePath }
-
-
+            }
+            .map { it.absolutePath }
     }
 
-
-    private fun collectDiffPaths(repo: Repository, since: LocalDate, until: LocalDate): List<String> {
+    private fun collectDiffPaths(
+        repo: Repository,
+        since: LocalDate,
+        until: LocalDate
+    ): List<String> {
         val git = Git(repo)
+        val zone = ZoneId.systemDefault()
 
-        repo.newObjectReader().use { reader ->
+        val commits = git.log().call().filter { commit ->
+            val date = Instant.ofEpochMilli(commit.authorIdent.`when`.time)
+                .atZone(zone).toLocalDate()
+            !date.isBefore(since) && !date.isAfter(until)
+        }
 
-            val commitsInRange = git.log().call().filter { commit ->
-                val commitTime: LocalDate =
-                    Instant.ofEpochSecond(commit.commitTime.toLong()).atZone(ZoneId.systemDefault()).toLocalDate()
-
-                !commitTime.isBefore(since) && !commitTime.isAfter(until)
-            }
-
-            val diffs = mutableListOf<String>()
-
-            // 각 diff 계산
-            for (commit in commitsInRange) {
-
-                // 부모 커밋(이전 커밋) 트리 생성 없으면 null
-                val parentTree = commit.parents.firstOrNull()?.let { parent ->
-                    CanonicalTreeParser().apply {
-                        reset(reader, repo.resolve("${parent.name}^{tree}"))
-                    }
-                }
-
-                // 현재 커밋의 트리 생성
-                val currentTree = CanonicalTreeParser().apply {
-                    reset(reader, repo.resolve("${commit.name}^{tree}"))
-                }
-
-                // diff 계산
-
-                git.diff().setOldTree(parentTree).setNewTree(currentTree).call().forEach { diff ->
-                    val path = if (diff.changeType == DiffEntry.ChangeType.DELETE) diff.oldPath
-                    else diff.newPath
-
-                    diffs.add(path)
+        return commits.flatMap { commit ->
+            val reader = repo.newObjectReader()
+            val parentTree = commit.parents.firstOrNull()?.let { parent ->
+                CanonicalTreeParser().apply {
+                    reset(reader, repo.resolve("${parent.name}^{tree}"))
                 }
             }
-
-            return diffs.toList()
+            val newTree = CanonicalTreeParser().apply {
+                reset(reader, repo.resolve("${commit.name}^{tree}"))
+            }
+            Git(repo).diff()
+                .setOldTree(parentTree)
+                .setNewTree(newTree)
+                .call()
+                .map { entry ->
+                    if (entry.changeType == DiffEntry.ChangeType.DELETE)
+                        entry.oldPath else entry.newPath
+                }
         }
     }
 
     // ───────────────────────────────────────────────────────────
-    // 4) ZIP 아카이브 생성 헬퍼
+    // 5) Class Mapping & ZIP Helpers
     // ───────────────────────────────────────────────────────────
-    private fun createZip(outputZip: File, block: (ZipOutputStream) -> Unit) {
-        ZipOutputStream(Files.newOutputStream(outputZip.toPath())).use { zip ->
-            block(zip)
+    private fun mapSourcesToClasses(
+        sources: List<String>,
+        workTree: File
+    ): List<String> = sources
+        .flatMap { src ->
+            if (!src.endsWith(".kt") && !src.endsWith(".java")) return@flatMap listOf(src)
+            mapToClassEntry(src, workTree) ?: emptyList()
         }
+        .distinct()
+
+    private fun mapToClassEntry(
+        src: String,
+        workTree: File
+    ): List<String>? {
+        val baseName = File(src).nameWithoutExtension
+        val candidates = listOf("$baseName.class", "${baseName}Kt.class")
+
+        val found = Files.walk(workTree.toPath())
+            .filter { Files.isRegularFile(it) }
+            .filter { it.fileName.toString() in candidates }
+            .findFirst().orElse(null) ?: return null
+
+        val entry = workTree.toPath()
+            .relativize(found)
+            .toString().replace(File.separatorChar, '/')
+
+        return listOf(entry)
     }
 
-    // ───────────────────────────────────────────────────────────
-    // 5) 실제 파일들을 ZIP에 담기
-    // ───────────────────────────────────────────────────────────
-    private fun addZipFiles(zip: ZipOutputStream, workTree: File, paths: List<String>) {
-        val workTreePath = workTree.toPath()
+    private fun createZip(
+        output: File,
+        block: (ZipOutputStream) -> Unit
+    ) {
+        ZipOutputStream(Files.newOutputStream(output.toPath())).use(block)
+    }
 
-        for (relative in paths) {
-
-            val file = if (Paths.get(relative).isAbsolute) {
-                File(relative)
-            } else {
-                File(workTree, relative)
-            }
-
-            if (!file.exists()) {
-                log.warn("File does not exist: ${file.absolutePath}")
-                continue
-            }
-
-            val entryName = workTreePath.relativize(file.toPath()).toString().replace(File.separatorChar, '/')
-
-            // ❸ 중복 체크: 이미 추가된 엔트리면 스킵
-            if (!zippedEntries.add(entryName)) {
-                println("Skipping duplicate entry: $entryName")
-                continue
-            }
-
+    private fun addZipFiles(
+        zip: ZipOutputStream,
+        baseDir: File,
+        paths: List<String>
+    ) {
+        val basePath = baseDir.toPath()
+        paths.forEach { rel ->
+            val file = if (Paths.get(rel).isAbsolute) File(rel) else File(baseDir, rel)
+            if (!file.exists()) { log.warn("Missing: ${file.absolutePath}"); return@forEach }
+            val entryName = basePath.relativize(file.toPath())
+                .toString().replace(File.separatorChar, '/')
+            if (!zippedEntries.add(entryName)) return@forEach
             zip.putNextEntry(ZipEntry(entryName))
-            FileInputStream(file).use { fis -> fis.copyTo(zip) }
+            FileInputStream(file).use { it.copyTo(zip) }
             zip.closeEntry()
         }
     }
 
-
-    // ───────────────────────────────────────────────────────────
-    // 6) 텍스트 엔트리(status.txt 등) 추가
-    // ───────────────────────────────────────────────────────────
-    private fun addTextEntry(zip: ZipOutputStream, entryName: String, lines: List<String>) {
-        zip.putNextEntry(ZipEntry(entryName))
-        lines.joinToString("\n").byteInputStream().use { it.copyTo(zip) }
-        zip.closeEntry()
-    }
+    private fun FileStatusType.allowsDiff() = this == FileStatusType.DIFF || this == FileStatusType.ALL
+    private fun FileStatusType.allowsStatus() = this == FileStatusType.STATUS || this == FileStatusType.ALL
 }
