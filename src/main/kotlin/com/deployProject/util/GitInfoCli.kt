@@ -71,20 +71,6 @@ object GitInfoCli {
         val diffEntries = mapSourcesToClasses(diffPaths, workTree)
         val statusEntries = mapSourcesToClasses(statusPaths, workTree)
 
-        // Create DeployScript
-        val script =ScriptCreate()
-            .getLegacyPatchScripts(
-                listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
-                deployServerDir
-            ).forEach { (name, line) ->
-                File(workTree, name).apply {
-                    writeText(line.joinToString("\n"))
-                }
-                println("Script: $name")
-                line.forEach { println(it) }
-            }
-
-
         // Create ZIP file
         createZip(outputZip) { zip ->
 
@@ -102,7 +88,7 @@ object GitInfoCli {
                 ).forEach { (name, line) ->
 
                     zip.putNextEntry(ZipEntry(name))
-                    zip.write( line.joinToString { "\n" } .toByteArray(Charsets.UTF_8) )
+                    zip.write( line.joinToString ("\n") .toByteArray(Charsets.UTF_8) )
                     zip.closeEntry()
                 }
         }
