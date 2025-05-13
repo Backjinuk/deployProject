@@ -13,17 +13,14 @@ object GitInfoCliLauncher {
             } ?: error("defaults.properties가 JAR에 없습니다")
 
         // 프로퍼티에서 값을 꺼낸 뒤
-        val repoDir    = props.getProperty("repoDir")
-        val relPath    = props.getProperty("relPath", "")
-        val since      = props.getProperty("since")
-        val until      = props.getProperty("until")
-        val statusType = props.getProperty("statusType", "ALL")
-
-
-        println("▶ Loaded defaults → repoDir=$repoDir, relPath=$relPath, since=$since, until=$until, statusType=$statusType")
-
+        val repoDir         = props.getProperty("repoDir")
+        val relPath         = props.getProperty("relPath", "")
+        val since           = props.getProperty("since")
+        val until           = props.getProperty("until")
+        val statusType      = props.getProperty("statusType", "ALL")
+        val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
 
         // GitInfoCli에 전달
-        GitInfoCli.main(arrayOf(repoDir, relPath, since, until, statusType))
+        GitInfoCli.main(arrayOf(repoDir, relPath, since, until, statusType, deployServerDir))
     }
 }

@@ -31,8 +31,6 @@ object JarCreator {
         FileOutputStream(jarFilePath).use { fos ->
             JarOutputStream(fos, createManifest()).use { jos ->
 
-
-
                 // 클래스 파일 추가
                 Files.walk(sourceDir)
                     .filter { Files.isRegularFile(it) }
@@ -98,7 +96,6 @@ object JarCreator {
      */
     @JvmStatic
     fun main(args: Array<String>) {
-
         /// 파일 생성
         val randomFileName = args[5]
         val path = Paths.get(randomFileName)
@@ -115,7 +112,7 @@ object JarCreator {
             ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd")).toString()
         val statusType    = args.getOrNull(4)?.takeIf { it.isNotBlank() } ?: "ALL"
         val jarFilePath   = "./${randomFileName}/deploy-project-cli.jar"
-
+        val deployServerDir = args.getOrNull(6)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/"
 
         // 2) defaults 맵 구성
         val defaults = mapOf(
@@ -123,7 +120,8 @@ object JarCreator {
             "relPath"     to relPath,
             "since"       to sinceDate,
             "until"       to untilDate,
-            "statusType"  to statusType
+            "statusType"  to statusType,
+            "deployServerDir" to deployServerDir
         )
 
         // 3) JAR 생성

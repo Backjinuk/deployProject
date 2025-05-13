@@ -33,6 +33,9 @@ object GitInfoCli {
      */
     @JvmStatic
     fun main(args: Array<String>) {
+
+        println("args2 = ${args.joinToString(",")}")
+
         val repoPath = args.getOrNull(0)
             ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
 
@@ -40,8 +43,9 @@ object GitInfoCli {
         val since = parseDateArg(args.getOrNull(2), dateFmt)
         val until = parseDateArg(args.getOrNull(3), dateFmt)
         val statusType = parseStatusType(args.getOrNull(4))
+        val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
 
-        run(repoPath, since, until, statusType)
+        run(repoPath, since, until, statusType, deployServerDir)
     }
 
     // ───────────────────────────────────────────────────────────
@@ -51,7 +55,8 @@ object GitInfoCli {
         repoPath: String,
         since: LocalDate,
         until: LocalDate,
-        fileStatusType: FileStatusType
+        fileStatusType: FileStatusType,
+        deployServerDir: String
     ) {
         val gitDir = parseGitDir(repoPath)
         val workTree = gitDir.parentFile
@@ -66,13 +71,40 @@ object GitInfoCli {
         val diffEntries = mapSourcesToClasses(diffPaths, workTree)
         val statusEntries = mapSourcesToClasses(statusPaths, workTree)
 
+        // Create DeployScript
+        val script =ScriptCreate()
+            .getLegacyPatchScripts(
+                listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
+                deployServerDir
+            ).forEach { (name, line) ->
+                File(workTree, name).apply {
+                    writeText(line.joinToString("\n"))
+                }
+                println("Script: $name")
+                line.forEach { println(it) }
+            }
+
+
+        // Create ZIP file
         createZip(outputZip) { zip ->
+
             if (fileStatusType.allowsDiff()) {
                 addZipFiles(zip, workTree, diffEntries)
             }
             if (fileStatusType.allowsStatus()) {
                 addZipFiles(zip, workTree, statusEntries)
             }
+
+            ScriptCreate()
+                .getLegacyPatchScripts(
+                    listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
+                    deployServerDir
+                ).forEach { (name, line) ->
+
+                    zip.putNextEntry(ZipEntry(name))
+                    zip.write( line.joinToString { "\n" } .toByteArray(Charsets.UTF_8) )
+                    zip.closeEntry()
+                }
         }
 
         println("✅ Created ZIP: ${outputZip.absolutePath}")
