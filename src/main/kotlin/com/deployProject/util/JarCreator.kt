@@ -14,8 +14,6 @@ import java.nio.file.Files
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Properties
-import java.util.UUID
-import kotlin.math.log
 
 /**
  * 동적으로 JAR 파일을 생성 및 실행할 수 있는 GUI 유틸리티

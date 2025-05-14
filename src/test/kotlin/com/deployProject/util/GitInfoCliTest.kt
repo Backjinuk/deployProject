@@ -31,9 +31,9 @@ class GitInfoCliTest {
     @Test
     fun `Jar파일 생성 테스트`() {
 
-        val since = ""
+        val since = "2025/05/10"
         val until = ""
-        val filestatus = "STATUS"
+        val filestatus = "ALL"
         val randomFileName = "GitInfoJarFile/"+UUID.randomUUID().toString();
         val deployServerDir = "/home/bjw/deployProject"
 

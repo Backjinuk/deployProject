@@ -38,7 +38,7 @@ class DeployController(
             .firstOrNull { it.name == dto.field }
             // var 로 선언된 프로퍼티만
             .takeIf { it is KMutableProperty1<*, *> }
-                as? KMutableProperty1<SiteDto, Any?>
+                as? KMutableProperty1<*, *>
             ?: throw ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
                 "Unknown or immutable field: ${dto.field}"

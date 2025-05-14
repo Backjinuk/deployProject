@@ -13,8 +13,7 @@ class ScriptCreate {
      * @return List<Pair<스크립트명, 스크립트 라인 리스트>>
      */
     fun getLegacyPatchScripts(
-        changedFiles: List<String>,
-        deployDir: String
+        changedFiles: List<String>, deployDir: String
     ): List<Pair<String, List<String>>> {
         val dateExpr = "$(date +'%Y%m%d')"
         val scripts = mutableListOf<Pair<String, List<String>>>()
@@ -29,9 +28,24 @@ class ScriptCreate {
         )
 
 
+// ... 기본정보(basicInfo) 정의 직후에 추가
+        val progressFunc  = listOf(
+            "print_progress() {",
+            "  local current=\$1 total=\$2",
+            "  local percent=\$(( current * 100 / total ))",
+            "  local filled=\$(( percent / 2 ))",
+            "  local empty=\$(( 50 - filled ))",
+            "  # # 개수만큼 채우고 나머지는 공백으로",
+            "  local bar=\$(printf '%0.s#' \$(seq 1 \$filled))",
+            "  printf '\\r[%-50s] %3d%%' \"\$bar\" \"\$percent\"",
+            "}",
+            ""
+        )
+
         // 1) 백업 스크립트 (backup.sh)
         val backupLines = mutableListOf<String>().apply {
             addAll(basicInfo)
+            addAll(progressFunc)
             add("## 백업용")
             changedFiles.forEach { rel ->
                 val dir = rel.substringBeforeLast('/')
@@ -44,9 +58,10 @@ class ScriptCreate {
         // 2) 배포 스크립트 (deploy.sh)
         val deployLines = mutableListOf<String>().apply {
             addAll(basicInfo)
+            addAll(progressFunc)
             add("## 배포용")
             changedFiles.forEach { rel ->
-                add("cp \"\$STAGING_DIR/\$DATE/${rel}\" \"$deployDir/${rel}\"")
+                add("cp \"\$STAGING_DIR/${rel}\" \"$deployDir/${rel}\"")
             }
         }
         scripts += "deploy.sh" to deployLines
@@ -54,12 +69,25 @@ class ScriptCreate {
         // 3) 원복 스크립트 (recover.sh)
         val recoverLines = mutableListOf<String>().apply {
             addAll(basicInfo)
+            addAll(progressFunc)
             add("## 원복용")
             changedFiles.forEach { rel ->
-                add("cd \"$deployDir/${rel}\" && cp \"\$STAGING_DIR/\$DATE/${rel}\"")
+                add("cd \"$deployDir/${rel}\" && cp \"\$STAGING_DIR/${rel}\"")
             }
         }
         scripts += "recover.sh" to recoverLines
+
+        // 4) 스크립트 권한 스크립트
+        val chmodLines = mutableListOf<String>().apply {
+            addAll(basicInfo)
+            addAll(progressFunc)
+            add("## 권한 부여용")
+            add("chmod +x backup.sh")
+            add("chmod +x deploy.sh")
+            add("chmod +x recover.sh")
+        }
+
+        scripts += "chmod.sh" to chmodLines
 
         return scripts
     }

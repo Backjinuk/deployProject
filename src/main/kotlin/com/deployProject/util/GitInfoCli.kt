@@ -34,8 +34,6 @@ object GitInfoCli {
     @JvmStatic
     fun main(args: Array<String>) {
 
-        println("args2 = ${args.joinToString(",")}")
-
         val repoPath = args.getOrNull(0)
             ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
 
