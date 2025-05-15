@@ -23,14 +23,6 @@ export default function PathAddModal({show, onPathAdd}: { show: boolean; onPathA
         text: "",
         homePath: "",
         localPath: "",
-        javaOld: "",
-        javaNew: "",
-        xmlOld: "",
-        xmlNew: "",
-        jspOld: "",
-        jspNew: "",
-        scriptOld: "",
-        scriptNew: "",
         userSeq: JSON.parse(localStorage.getItem('deployUser') || "{}").id || "",
     });
 
@@ -78,15 +70,7 @@ export default function PathAddModal({show, onPathAdd}: { show: boolean; onPathA
                                 [
                                     { key: "text", label: "사이트 이름" },
                                     { key: "homePath", label: "운영 서버 홈 디렉토리" },
-                                    { key: "localPath", label: "사용자 로컬 디렉토리" },
-                                    { key: "javaOld", label: "로컬 Java 경로" },
-                                    { key: "javaNew", label: "서버 배치 Java 경로" },
-                                    { key: "xmlOld", label: "원본 XML 경로" },
-                                    { key: "xmlNew", label: "서버 배치 XML 경로" },
-                                    { key: "jspOld", label: "원본 JSP 경로" },
-                                    { key: "jspNew", label: "서버 배치 JSP 경로" },
-                                    { key: "scriptOld", label: "원본 스크립트 경로" },
-                                    { key: "scriptNew", label: "서버 배치 스크립트 경로" },
+                                    { key: "localPath", label: "사용자 로컬 디렉토리" }
                                 ] as const
                             ).map(({ key, label }) => (
                                 <div className="input-group mb-3" key={key}>

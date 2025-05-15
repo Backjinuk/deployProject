@@ -18,8 +18,10 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Date
+import java.util.Map.entry
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.io.path.relativeTo
 
 /**
  * GitInfoCli: Git 상태 변경 및 diff 경로를 수집하여 ZIP으로 패키징하는 CLI 유틸리티
@@ -207,18 +209,19 @@ object GitInfoCli {
         workTree: File
     ): List<String>? {
         val baseName = File(src).nameWithoutExtension
-        val candidates = listOf("$baseName.class", "${baseName}Kt.class")
+        val pattern = Regex("^${Regex.escape(baseName)}(\\$.*)?\\.class$")
 
-        val found = Files.walk(workTree.toPath())
-            .filter { Files.isRegularFile(it) }
-            .filter { it.fileName.toString() in candidates }
-            .findFirst().orElse(null) ?: return null
+        val entries = Files.walk(workTree.toPath())
+            .filter { path -> Files.isRegularFile(path) }
+            .filter { path -> pattern.matches(path.fileName.toString()) }
+            .map { path ->
+                workTree.toPath()
+                    .relativize(path)
+                    .toString()
+                    .replace(File.separatorChar, '/')
+            }.toList()
 
-        val entry = workTree.toPath()
-            .relativize(found)
-            .toString().replace(File.separatorChar, '/')
-
-        return listOf(entry)
+        return entries
     }
 
     private fun createZip(

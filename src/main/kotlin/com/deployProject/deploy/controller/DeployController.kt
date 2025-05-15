@@ -47,9 +47,6 @@ class DeployController(
         // 2) setter 호출로 dto 객체에 값 대입
         prop.setter.call(dto, dto.value)
 
-        println("dto = ${dto.homePath}")
-        println("dto.id = ${dto.id}")
-
         deployService.updatePath(dto)
     }
 

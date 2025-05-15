@@ -65,34 +65,15 @@ tasks.withType<KotlinCompile> {
 }
 
 
-// shadowJar 설정: fat-JAR 생성 및 Manifest Main-Class, 의존성 포함
-//tasks.named<ShadowJar>("shadowJar") {
-//    archiveBaseName.set("deploy-project-cli")
-//    archiveClassifier.set("")
-//    archiveVersion.set(project.version.toString())
-//
-//    // 런타임 클래스패스 의존성까지 모두 병합 (main source set 사용)
-//    from({
-//        val sourceSets = project.extensions.getByType<SourceSetContainer>()
-//        sourceSets.getByName("main").runtimeClasspath
-//            .filter { it.name.endsWith(".jar") }
-//            .map { zipTree(it) }
-//    })
-//
-//    mergeServiceFiles()
-//    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-//
-//    manifest {
-//        attributes(
-//            "Main-Class" to application.mainClass.get()
-//        )
-//    }
-//}
+application {
+    // Kotlin DSL 에서는 이렇게
+    mainClass.set("com.deployProject.DeployProjectApplicationKt")
+}
 
-// build 시 shadowJar 실행 보장
-//tasks.named("build") {
-//    dependsOn(tasks.named("shadowJar"))
-//}
+springBoot {
+    // Spring Boot 플러그인 버전에 따라
+    mainClass.set("com.deployProject.DeployProjectApplicationKt")
+}
 
 // 테스트: JUnit Platform 사용
 tasks.withType<Test> {

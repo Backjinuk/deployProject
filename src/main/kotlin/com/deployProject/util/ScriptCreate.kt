@@ -48,10 +48,13 @@ class ScriptCreate {
             addAll(progressFunc)
             add("## 백업용")
             changedFiles.forEach { rel ->
-                val dir = rel.substringBeforeLast('/')
-                val file = rel.substringAfterLast('/')
+                val nRel = if(rel.contains("$"))  rel.replace("$", "\\$") else rel
+                val dir = nRel.substringBeforeLast('/')
+                val file = nRel.substringAfterLast('/')
                 add("cd \"$deployDir/$dir\" && cp \"$file\" \"${file}\$DATE\"")
             }
+
+            add("echo \"\\n백업 완료\"")
         }
         scripts += "backup.sh" to backupLines
 
@@ -61,8 +64,10 @@ class ScriptCreate {
             addAll(progressFunc)
             add("## 배포용")
             changedFiles.forEach { rel ->
-                add("cp \"\$STAGING_DIR/${rel}\" \"$deployDir/${rel}\"")
+                val nRel = if(rel.contains("$"))  rel.replace("$", "\\$") else rel
+                add("cp \"\$STAGING_DIR/${nRel}\" \"$deployDir/${nRel}\"")
             }
+            add("echo \"\\n배포 완료\"")
         }
         scripts += "deploy.sh" to deployLines
 
@@ -72,8 +77,10 @@ class ScriptCreate {
             addAll(progressFunc)
             add("## 원복용")
             changedFiles.forEach { rel ->
-                add("cd \"$deployDir/${rel}\" && cp \"\$STAGING_DIR/${rel}\"")
+                val nRel = if(rel.contains("$"))  rel.replace("$", "\\$") else rel
+                add("cd \"$deployDir/${nRel}\" && cp \"\$STAGING_DIR/${nRel}\"")
             }
+            add("echo \"\\n원복 완료\"")
         }
         scripts += "recover.sh" to recoverLines
 
@@ -85,6 +92,7 @@ class ScriptCreate {
             add("chmod +x backup.sh")
             add("chmod +x deploy.sh")
             add("chmod +x recover.sh")
+            add("echo \"\\n권한 부여 완료\"")
         }
 
         scripts += "chmod.sh" to chmodLines
