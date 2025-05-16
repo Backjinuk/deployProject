@@ -25,6 +25,9 @@ java {
 
 repositories {
     mavenCentral()
+    maven("https://oss.sonatype.org/content/repositories/snapshots/")
+    // (선택) NimblyGames 릴리스 저장소
+    maven("https://artifactory.nimblygames.com/artifactory/ng-public-release/")
 }
 
 dependencies {
@@ -37,6 +40,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("com.badlogicgames.packr:packr:3.0.3")
 
     // Lombok (컴파일 타임만)
     compileOnly("org.projectlombok:lombok")

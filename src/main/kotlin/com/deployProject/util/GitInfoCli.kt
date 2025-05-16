@@ -6,6 +6,7 @@ import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.slf4j.LoggerFactory
+import org.springframework.data.util.StreamUtils.zip
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException

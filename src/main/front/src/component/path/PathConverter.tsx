@@ -49,8 +49,32 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             localPath : site.localPath,
             homePath: site.homePath,
             fileStatusType: fileStatusType
-        })
-            .then(res => console.log('추출 완료', res.data))
+        },
+            {responseType: 'blob'} // blob으로 응답 받기
+        )
+            .then(res => {
+                const date = new Date();
+                // 응답 헤더에서 파일 이름 추출
+                const disposition = res.headers['content-disposition']
+                let filename = `${site.text}-${date}-deployCli.jar`
+                if (disposition) {
+                    const match = disposition.match(/filename="(.+)"/)
+                    if (match && match[1]) filename = match[1]
+                }
+
+                const blob = new Blob([res.data], { type: 'content-type' });
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a');
+               a.href = url
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                URL.revokeObjectURL(url);
+                a.remove();
+
+                console.log('추출 성공', filename)
+
+            })
             .catch(err => console.error('추출 실패:', err));
     };
 
