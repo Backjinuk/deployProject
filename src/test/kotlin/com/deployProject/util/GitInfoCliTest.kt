@@ -12,7 +12,8 @@ import kotlin.test.fail
 
 class GitInfoCliTest {
 
-    private val repoGitDir = File("D:/DevSpace/deployProject/.git")
+    private val repoGitDir = File("/Users/mac/IdeaProjects/deployProject/.git")
+
 
 
     @Test
