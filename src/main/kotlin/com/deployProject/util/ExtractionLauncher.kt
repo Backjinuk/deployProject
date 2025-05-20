@@ -1,5 +1,6 @@
 package com.deployProject.util
 
+import java.io.File
 import java.util.Properties
 
 object ExtractionLauncher {
@@ -21,13 +22,14 @@ object ExtractionLauncher {
         val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
 
 
-        if(deployServerDir.endsWith(".git")){
+        // GitInfoCli에 전달
+        if (repoDir.endsWith("/.git")) {
             GitInfoCli.main(arrayOf(repoDir, relPath, since, until, statusType, deployServerDir))
+
         }else{
             // SVN 처리 로직
             println("SVN 처리 로직을 구현하세요.")
         }
 
-        // GitInfoCli에 전달
     }
 }

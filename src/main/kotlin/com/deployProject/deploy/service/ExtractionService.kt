@@ -24,6 +24,8 @@ class ExtractionService(
             localPath = "${base}/${suffix}"
         }
 
+        println("[DEBUG] Updated localPath: ${extractionDto.localPath}")
+
         val randomFileName = "GitInfoJarFile/${UUID.randomUUID()}"
         val deployJarName = "deploy-project-cli.jar"
 
@@ -62,7 +64,9 @@ class ExtractionService(
         val config = PackrConfig().apply {
             platform =
                 if (targetOs == TargetOsStatus.WINDOWS) PackrConfig.Platform.Windows64 else PackrConfig.Platform.MacOS
-            jdk = "C:/Program Files/Java/jdk-17"
+
+//            jdk = "C:/Program Files/Java/jdk-17"
+            jdk = "/Users/mac/.sdkman/candidates/java/current/bin/java"
             executable = "deploy-project-cli"
             classpath = listOf(jarFile.absolutePath)
             mainClass = "com.deployProject.util.GitInfoCliLauncher"

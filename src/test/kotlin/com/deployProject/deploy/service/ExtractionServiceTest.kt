@@ -17,9 +17,9 @@ class ExtractionServiceTest {
             since = "2025-05-01"
             until = "2025-05-20"
             fileStatusType = "ALL"
-            localPath = "D:/DevSpace/deployProject/"
+            localPath = "/Users/mac/IdeaProjects/deployProject"
             homePath = "/home/bjw/deployProject"
-            targetOs = TargetOsStatus.WINDOWS
+            targetOs = TargetOsStatus.MAC
         }
 
         // When

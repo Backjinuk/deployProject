@@ -37,7 +37,8 @@
 //        }
 //    }
 //
-//    private fun determineOutputZip(svnDir: File): File {
+//    private fun determineOutputZip(svnDir: File): File
+//    {
 //        val date = SimpleDateFormat("yyyyMMdd").format(Date())
 //        return File(svnDir.parentFile, "$date.zip")
 //    }

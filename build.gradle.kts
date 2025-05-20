@@ -50,7 +50,7 @@ dependencies {
 
     // Git & SVN
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.7.0.202309050840-r")
-    implementation("org.tmatesoft.svnkit:svnkit:1.10.11")
+    implementation("org.tmatesoft.svnkit:svnkit:1.10.3")
 
     // 기타
     implementation("org.modelmapper:modelmapper:3.1.1")
