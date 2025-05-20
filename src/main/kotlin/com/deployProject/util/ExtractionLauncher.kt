@@ -2,11 +2,11 @@ package com.deployProject.util
 
 import java.util.Properties
 
-object GitInfoCliLauncher {
+object ExtractionLauncher {
     @JvmStatic
     fun main(args: Array<String>) {
         // args가 비어 있으면 defaults.properties 로드를 시도
-        val props = GitInfoCliLauncher::class.java
+        val props = ExtractionLauncher::class.java
             .getResourceAsStream("/defaults.properties")
             ?.use { inp ->
                 Properties().apply { load(inp) }
@@ -20,7 +20,14 @@ object GitInfoCliLauncher {
         val statusType      = props.getProperty("statusType", "ALL")
         val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
 
+
+        if(deployServerDir.endsWith(".git")){
+            GitInfoCli.main(arrayOf(repoDir, relPath, since, until, statusType, deployServerDir))
+        }else{
+            // SVN 처리 로직
+            println("SVN 처리 로직을 구현하세요.")
+        }
+
         // GitInfoCli에 전달
-        GitInfoCli.main(arrayOf(repoDir, relPath, since, until, statusType, deployServerDir))
     }
 }

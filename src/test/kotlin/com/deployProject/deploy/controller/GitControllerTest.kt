@@ -7,6 +7,8 @@ import org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter
 import org.eclipse.jgit.revwalk.filter.RevFilter
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.junit.jupiter.api.Test
+import org.tmatesoft.svn.core.wc.SVNClientManager
+import org.tmatesoft.svn.core.wc.SVNRevision
 import java.io.File
 import java.text.SimpleDateFormat
 
@@ -95,7 +97,22 @@ class GitControllerTest {
         }
     }
 
+    @Test
+    fun `svn 메타데이터만 조회`(){
+        val workingCopyPath = "D:/DevSpace/FGI_Space/FGI_kisia/.svn"
+        val clientManager = SVNClientManager.newInstance()
+        // 2) doInfo() 호출 → .svn 내부의 WC DB에서 읽어옴
 
+        val doInfo = clientManager
+            .wcClient
+            .doInfo(File(workingCopyPath), SVNRevision.WORKING)
+
+        // 3) SVNInfo 객체에서 정보 추출
+        println("URL: ${doInfo.url}")
+        println("Repository Root: ${doInfo.repositoryRootURL}")
+
+
+    }
 
 
 }

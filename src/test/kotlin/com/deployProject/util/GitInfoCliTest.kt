@@ -12,7 +12,7 @@ import kotlin.test.fail
 
 class GitInfoCliTest {
 
-    private val repoGitDir = File("D:/DevSpace/deployProject/.git")
+    private val repoGitDir = File("D:/DevSpace/deployProject")
 
 
     @Test
@@ -40,6 +40,8 @@ class GitInfoCliTest {
         JarCreator.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, randomFileName, deployServerDir))
 
     }
+
+
 
     @Test
     fun `디렉토리 생성 테스트`(){

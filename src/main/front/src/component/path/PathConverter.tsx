@@ -30,7 +30,6 @@ const PathConverter: React.FC<Props> = ({ site }) => {
     const [statusEnabled, setStatusEnabled] = useState(true);
 
     const extraction = () => {
-        console.log("site : ", site);
         let fileStatusType;
 
         if (gitEnabled && statusEnabled) {
@@ -41,6 +40,19 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             fileStatusType = 'STATUS'
         }
 
+        const ua = navigator.userAgent.toLowerCase();
+        let targetOs;
+
+        if (ua.indexOf('windows') > -1) {
+            targetOs = 'WINDOWS';
+        } else if (ua.indexOf('mac') > -1) {
+            targetOs = 'MAC';
+        } else if (ua.indexOf('linux') > -1) {
+            targetOs = 'LINUX';
+        } else {
+            console.error('지원하지 않는 OS입니다.');
+            return;
+        }
 
         axios.post('/api/git/extraction', {
             siteId:    site.id,
@@ -48,7 +60,8 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             until:   endDate?.toISOString(),
             localPath : site.localPath,
             homePath: site.homePath,
-            fileStatusType: fileStatusType
+            fileStatusType: fileStatusType,
+            targetOs: targetOs,
         },
             {responseType: 'blob'} // blob으로 응답 받기
         )
@@ -56,7 +69,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                 const date = new Date();
                 // 응답 헤더에서 파일 이름 추출
                 const disposition = res.headers['content-disposition']
-                let filename = `${site.text}-${date}-deployCli.jar`
+                let filename = `${site.text}-${date}-deployCli.exe`
                 if (disposition) {
                     const match = disposition.match(/filename="(.+)"/)
                     if (match && match[1]) filename = match[1]

@@ -76,7 +76,7 @@ object JarCreator {
      */
     private fun createManifest(): Manifest = Manifest().apply {
         mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
-        mainAttributes[Attributes.Name("Main-Class")] = "com.deployProject.util.GitInfoCliLauncher"
+        mainAttributes[Attributes.Name("Main-Class")] = "com.deployProject.util.ExtractionLauncher"
     }
 
 
