@@ -22,6 +22,8 @@ import java.util.Date
 import java.util.Map.entry
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import javax.swing.JOptionPane
+import javax.swing.JPasswordField
 import kotlin.io.path.relativeTo
 
 /**
@@ -36,6 +38,8 @@ object GitInfoCli {
      */
     @JvmStatic
     fun main(args: Array<String>) {
+
+
 
         val repoPath = args.getOrNull(0)
             ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
@@ -250,6 +254,11 @@ object GitInfoCli {
         }
     }
 
+
     private fun FileStatusType.allowsDiff() = this == FileStatusType.DIFF || this == FileStatusType.ALL
     private fun FileStatusType.allowsStatus() = this == FileStatusType.STATUS || this == FileStatusType.ALL
+
+
+
+
 }

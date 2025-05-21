@@ -14,6 +14,8 @@ import java.nio.file.Files
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Properties
+import javax.swing.JOptionPane
+import javax.swing.JPasswordField
 
 /**
  * 동적으로 JAR 파일을 생성 및 실행할 수 있는 GUI 유틸리티
@@ -100,6 +102,8 @@ object JarCreator {
         Files.createDirectories(path)
 
 
+
+
         // 1) 필수 및 옵션 파라미터 파싱
         val repoDir       = args.getOrNull(0)?.takeIf { it.isNotBlank() }
             ?: error("Usage: <repoDir> [relPath] [sinceDate] [untilDate] [fileStatusType] [jarFilePath]")
@@ -131,5 +135,9 @@ object JarCreator {
 
         println("✅ JAR 생성 완료: $jarFilePath")
     }
+
+
+
+
 
 }

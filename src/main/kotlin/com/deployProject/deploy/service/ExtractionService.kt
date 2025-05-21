@@ -8,6 +8,8 @@ import com.deployProject.util.JarCreator
 import org.springframework.stereotype.Service
 import java.io.File
 import java.util.*
+import javax.swing.JOptionPane
+import javax.swing.JPasswordField
 
 @Service
 class ExtractionService(
@@ -16,6 +18,8 @@ class ExtractionService(
 
     fun extractGitInfo(extractionDto: ExtractionDto): File {
         println("[DEBUG] Starting extractGitInfo with DTO: $extractionDto")
+        // 1) (옵션) Swing 팝업으로 SVN 자격증명 입력받기
+
 
         // 현재 프로잭트가 Git인지 SVN인지 확인
         extractionDto.apply {
@@ -69,7 +73,7 @@ class ExtractionService(
             jdk = "/Users/mac/.sdkman/candidates/java/current/bin/java"
             executable = "deploy-project-cli"
             classpath = listOf(jarFile.absolutePath)
-            mainClass = "com.deployProject.util.GitInfoCliLauncher"
+            mainClass = "com.deployProject.util.ExtractionLauncher"
             vmArgs = listOf("-Xmx512m")
             outDir = outputDir
             useZgcIfSupportedOs = true
@@ -86,4 +90,6 @@ class ExtractionService(
 
         return File(outputDir, "deploy-project-cli.exe")
     }
+
+
 }

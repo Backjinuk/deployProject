@@ -28,7 +28,7 @@ object ExtractionLauncher {
 
         }else{
             // SVN 처리 로직
-            println("SVN 처리 로직을 구현하세요.")
+            SvnInfoCli.main(arrayOf(repoDir, relPath, since, until, statusType, deployServerDir))
         }
 
     }
