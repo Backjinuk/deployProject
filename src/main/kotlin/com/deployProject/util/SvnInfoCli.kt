@@ -8,19 +8,27 @@ import org.tmatesoft.svn.core.wc.SVNStatusType
 import org.tmatesoft.svn.core.wc.SVNWCUtil
 import java.awt.GridLayout
 import java.io.File
+import java.io.FileInputStream
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.text.SimpleDateFormat
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import javax.swing.JLabel
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JPasswordField
 import javax.swing.JTextField
+import kotlin.math.log
 
 object SvnInfoCli {
 
+    private val zippedEntries = mutableSetOf<String>()
 
     /**
      * 진입점: <gitDir> [sinceDate] [untilDate] [fileStatusType]
@@ -29,44 +37,108 @@ object SvnInfoCli {
     fun main(args: Array<String>) {
 
         /* 사용자가 svn 정보를 기입할수 있*/
-        collectSvnCredentials()
 //        val (svnUser, svnPass) = promptForSvnCredentialsOneShot()
 //        println("[DEBUG] SVN Credentials: $svnUser / ${"*".repeat(svnPass.length)}")
 
-//        val repoPath = args.getOrNull(0)
-//            ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
-//
-//        val dateFmt = DateTimeFormatter.ofPattern("yyyy/MM/dd")
-//        val since = parseDateArg(args.getOrNull(2), dateFmt)
-//        val until = parseDateArg(args.getOrNull(3), dateFmt)
-//        val statusType = parseStatusType(args.getOrNull(4))
-//        val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
-//
-//        SvnInfoCli.run(repoPath, since, until, statusType, deployServerDir)
+        val repoPath = args.getOrNull(0)
+            ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
+
+        val dateFmt = SimpleDateFormat("yyyy/MM/dd")
+        val since = parseDateArg(args.getOrNull(2), dateFmt)
+        val until = parseDateArg(args.getOrNull(3), dateFmt)
+        val statusType = parseStatusType(args.getOrNull(4))
+        val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
+
+        run(repoPath, since, until, statusType, deployServerDir)
     }
 
     @Throws(IOException::class)
     fun run(
         repoPath: String,
-        since: LocalDate,
-        until: LocalDate,
+        since: Date,
+        until: Date,
         fileStatusType: FileStatusType,
         deployServerDir: String
     ) {
 
-        val svnDir = parseSvnDir(repoPath)
+//        val svnDir = parseSvnDir(repoPath)
+        println(repoPath)
+        val svnDir = File(repoPath)
         val workTree = svnDir.parentFile
         val outputZip = determineOutputZip(svnDir)
 
 
-        val svnStatusPath = collectStatusPath(repoPath)
-//        val svnDiffPath = collectDiffPath(repoPath, since, until)
+        val svnStatusPath = collectStatusPath(repoPath, since, until)
+        val svnDiffPath = collectDiffPath(repoPath, since, until)
 
+        svnStatusPath.forEach { path ->
+            println("svnStatusPath = ${path}")
+        }
+
+        val diffEntries = mapSourcesToClasses(svnDiffPath, workTree)
+        val statusEntries = mapSourcesToClasses(svnStatusPath, workTree)
+
+        statusEntries.forEach { path ->
+            println("path = ${path}")
+        }
+//        createZip(outputZip){ zip ->
+//           if(fileStatusType.allowsStatus()){
+//               println("statusPath: $svnStatusPath")
+//               addZipEntry(zip,  workTree, statusEntries)
+//           }
+//
+//            if(fileStatusType.allowsStatus()){
+//                println("diffPath: $svnDiffPath")
+//                addZipEntry(zip,  workTree, diffEntries)
+//            }
+//        }
+
+        println("✅ Created ZIP: ${outputZip.absolutePath}")
     }
 
 
-    private fun collectStatusPath(rootPath: String): List<String> {
-        val svnDir = detectSvnConfigDir()
+    private fun createZip(
+        output: File,
+        block: (ZipOutputStream) -> Unit
+    ) {
+        ZipOutputStream(Files.newOutputStream(output.toPath())).use(block)
+    }
+
+
+    private fun addZipEntry(zip: ZipOutputStream, baseDir : File, paths : List<String>) {
+        val basePath = baseDir.toPath()
+        paths.forEach { rel ->
+            val file = if (Paths.get(rel).isAbsolute) File(rel) else File(baseDir, rel)
+
+           if (!file.exists()) return@forEach
+
+           if(file.isDirectory){
+               Files.walk(file.toPath()).filter { Files.isRegularFile(it) }
+                   .forEach { child -> addZipFile(zip, basePath, child.toFile()) }
+           }else{
+                addZipFile(zip, basePath, file)
+           }
+
+        }
+    }
+
+    private fun addZipFile(zip: ZipOutputStream, basePath : Path, file : File) {
+        val entryName = basePath.relativize(file.toPath())
+            .toString()
+            .replace(File.separatorChar, '/')
+
+        if (!SvnInfoCli.zippedEntries.add(entryName)) return
+
+        zip.putNextEntry(ZipEntry(entryName))
+        FileInputStream(file).use { it.copyTo(zip) }
+        zip.closeEntry()
+    }
+
+
+    private fun collectStatusPath(rootPath: String, since : Date, until : Date): List<String> {
+        val svnDir = File(rootPath)
+        val dateZone = ZoneId.systemDefault()
+
         val clientManager = createClientManagerWithCachedAuth()
         val svnStatus = clientManager.statusClient
         val svnDiff = clientManager.diffClient
@@ -89,10 +161,20 @@ object SvnInfoCli {
             }
         }
 
-        return changedFiles.map { path -> path.absolutePath }
+        return changedFiles.map { File(it.absolutePath) }
+            .filter {file ->
+                file.exists().also {  if (!it) print("Missing: $file")  }
+            }
+            .filter { file ->
+                val fileDate = Instant.ofEpochMilli(file.lastModified())
+                    .atZone(dateZone).toLocalDate()
+                !fileDate.isBefore(since.toInstant().atZone(ZoneId.systemDefault()).toLocalDate())
+                        && !fileDate.isAfter(until.toInstant().atZone(ZoneId.systemDefault()).toLocalDate())
+            }.map { it.absolutePath }
     }
 
     private fun collectDiffPath(rootPath: String, startDate : Date , endDate : Date): List<String> {
+
         val clientManager = createClientManagerWithCachedAuth()
 
         // SVN 상태 수집 로직
@@ -108,20 +190,47 @@ object SvnInfoCli {
                 /*limit */         0L /*제한 없음*/
             )
             /*ISVNLogEntryHandler*/     { logEntry ->
-                println("▶ r${logEntry.revision} 에서 변경된 파일:")
                 logEntry.changedPaths.values.forEach { change ->
-                    println("   ${change.type} ${change.path}")
                 }
             }
         }catch (e: Exception) {
+//            val (user, passwd) = collectSvnCredentials()
+
+
             println("Error during SVN log retrieval: ${e.message}")
-
-
-
-
         }
 
         return changedFiles.map { path -> path.absolutePath }
+    }
+
+    private fun mapSourcesToClasses(
+        sources: List<String>,
+        workTree: File
+    ): List<String> = sources
+        .flatMap { src ->
+            if (!src.endsWith(".kt") && !src.endsWith(".java")) return@flatMap listOf(src)
+            mapToClassEntry(src, workTree) ?: emptyList()
+        }
+        .distinct()
+
+    private fun mapToClassEntry(
+        src: String,
+        workTree: File
+    ): List<String>? {
+        val baseName = File(src).nameWithoutExtension
+        val pattern = Regex("^${Regex.escape(baseName)}(\\$.*)?\\.class$")
+
+        val entries = Files.walk(workTree.toPath())
+            .filter { path -> Files.isRegularFile(path) }
+            .filter { path -> pattern.matches(path.fileName.toString()) }
+            .map { path ->
+                workTree.toPath()
+                    .relativize(path)
+                    .toString()
+                    .replace(File.separatorChar, '/')
+            }.toList()
+
+        return entries
     }
 
 
@@ -201,14 +310,14 @@ object SvnInfoCli {
         }
     } ?: FileStatusType.ALL
 
-    private fun parseDateArg(dateStr: String?, dateFmt: DateTimeFormatter): LocalDate {
+    private fun parseDateArg(dateStr: String?, dateFmt: SimpleDateFormat): Date {
         return dateStr?.let {
             try {
-                LocalDate.parse(it, dateFmt)
+                dateFmt.parse(it)
             } catch (e: Exception) {
                 error("Invalid date format: $it. Expected format: yyyy/MM/dd")
             }
-        } ?: LocalDate.now()
+        } ?: Date()
     }
 
 
@@ -220,7 +329,7 @@ object SvnInfoCli {
 
     private fun determineOutputZip(svnDir: File): File {
         val date = SimpleDateFormat("yyyyMMdd").format(Date())
-        return File(svnDir.parentFile, "$date.zip")
+        return File(svnDir, "$date.zip")
     }
 
 
@@ -259,4 +368,6 @@ object SvnInfoCli {
         return user to pass
     }
 
+    private fun FileStatusType.allowsDiff() = this == FileStatusType.DIFF || this == FileStatusType.ALL
+    private fun FileStatusType.allowsStatus() = this == FileStatusType.STATUS || this == FileStatusType.ALL
 }

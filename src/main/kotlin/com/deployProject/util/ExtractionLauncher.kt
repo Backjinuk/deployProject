@@ -21,6 +21,7 @@ object ExtractionLauncher {
         val statusType      = props.getProperty("statusType", "ALL")
         val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
 
+        println("repoDir = ${repoDir}")
 
         // GitInfoCli에 전달
         if (repoDir.endsWith("/.git")) {

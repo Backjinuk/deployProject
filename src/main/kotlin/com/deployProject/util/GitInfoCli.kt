@@ -244,7 +244,6 @@ object GitInfoCli {
         val basePath = baseDir.toPath()
         paths.forEach { rel ->
             val file = if (Paths.get(rel).isAbsolute) File(rel) else File(baseDir, rel)
-            if (!file.exists()) { log.warn("Missing: ${file.absolutePath}"); return@forEach }
             val entryName = basePath.relativize(file.toPath())
                 .toString().replace(File.separatorChar, '/')
             if (!zippedEntries.add(entryName)) return@forEach

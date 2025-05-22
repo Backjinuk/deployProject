@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.tmatesoft.svn.core.auth.BasicAuthenticationManager
 import org.tmatesoft.svn.core.wc.SVNClientManager
+import org.tmatesoft.svn.core.wc.SVNInfo
 import org.tmatesoft.svn.core.wc.SVNRevision
 import org.tmatesoft.svn.core.wc.SVNStatusType
 import org.tmatesoft.svn.core.wc.SVNWCUtil
@@ -17,11 +18,8 @@ class SvnInfoCliTest {
     /** TortoiseSVN/CLI 공용 config 디렉터리 감지 */
     private fun detectSvnConfigDir(): File {
         val os = System.getProperty("os.name").lowercase()
-        println("OS: $os")
         return if (os.contains("win")) File(System.getenv("APPDATA"), "Subversion")
-        else                                File("/Users/mac", ".subversion")
-
-
+        else                                File(System.getProperty("user.home"), ".subversion")
     }
 
     /** 캐시된 인증 사용 clientManager 생성 */
@@ -36,17 +34,18 @@ class SvnInfoCliTest {
     @Test
     fun `doInfo_캐시된_인증으로_메타데이터_조회_테스트`() {
         // 목적: .svn 메타데이터에서 마지막 커밋 리비전만 읽어오는 테스트
-        val root = "/Users/mac/IdeaProjects/icarevalue_home"
-//        val root = "D:/DevSpace/FGI_Space/FGI_kisia"
+//        val root = "/Users/mac/IdeaProjects/icarevalue_home"
+        val root = "D:/DevSpace/FGI_Space/FGI_kisia"
+
+        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        val startDate = fmt.parse("2024-10-01 00:00:00")
+        val endDate = fmt.parse("2024-10-31 23:59:59")
 
 
         if(File("/Users/mac", ".subversion").exists()){
 
         }
 
-        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-        val startDate = fmt.parse("2024-10-01 00:00:00")
-        val endDate = fmt.parse("2024-10-31 23:59:59")
 
 
         val clientManager = createClientManagerWithCachedAuth()
@@ -181,4 +180,6 @@ class SvnInfoCliTest {
             filesInRange.forEach { println("   • ${it.absolutePath}") }
         }
     }
+
+
 }
