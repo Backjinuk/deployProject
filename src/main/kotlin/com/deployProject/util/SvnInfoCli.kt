@@ -2,10 +2,14 @@ package com.deployProject.util
 
 import com.deployProject.deploy.domain.site.FileStatusType
 import de.regnis.q.sequence.core.QSequenceAssert.assertTrue
+import org.slf4j.LoggerFactory
 import org.tmatesoft.svn.core.wc.SVNClientManager
 import org.tmatesoft.svn.core.wc.SVNRevision
 import org.tmatesoft.svn.core.wc.SVNStatusType
 import org.tmatesoft.svn.core.wc.SVNWCUtil
+import java.awt.BorderLayout
+import java.awt.Dimension
+import java.awt.Frame
 import java.awt.GridLayout
 import java.io.File
 import java.io.FileInputStream
@@ -16,29 +20,23 @@ import java.nio.file.Paths
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Date
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import javax.swing.JLabel
-import javax.swing.JOptionPane
-import javax.swing.JPanel
-import javax.swing.JPasswordField
-import javax.swing.JTextField
-import kotlin.math.log
+import javax.swing.*
+import java.util.Date
 
 object SvnInfoCli {
 
+    private val log = LoggerFactory.getLogger(SvnInfoCli::class.java)
     private val zippedEntries = mutableSetOf<String>()
+    private var statusClassMap: Map<String, String> = mapOf()
+    private var diffClassMap: Map<String, String> = mapOf()
 
     /**
      * 진입점: <gitDir> [sinceDate] [untilDate] [fileStatusType]
      */
     @JvmStatic
     fun main(args: Array<String>) {
-
-        /* 사용자가 svn 정보를 기입할수 있*/
-//        val (svnUser, svnPass) = promptForSvnCredentialsOneShot()
-//        println("[DEBUG] SVN Credentials: $svnUser / ${"*".repeat(svnPass.length)}")
 
         val repoPath = args.getOrNull(0)
             ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
@@ -54,80 +52,114 @@ object SvnInfoCli {
 
     @Throws(IOException::class)
     fun run(
-        repoPath: String,
-        since: Date,
-        until: Date,
-        fileStatusType: FileStatusType,
-        deployServerDir: String
+        repoPath: String, since: Date, until: Date, fileStatusType: FileStatusType, deployServerDir: String
     ) {
 
-//        val svnDir = parseSvnDir(repoPath)
-        println(repoPath)
-        val svnDir = File(repoPath)
-        val workTree = svnDir.parentFile
-        val outputZip = determineOutputZip(svnDir)
+        showProgressAndRun(initialMessage = "SVN 배포를 시작합니다…") {
 
+            val svnDir = parseSvnDir(repoPath)
+            val workTree = if (svnDir.name == ".svn") svnDir.parentFile else svnDir
+            val outputZip = determineOutputZip(svnDir)
+            val svnStatusPath: List<String> = collectStatusPath(svnDir.path, since, until)
+            val svnDiffPath: List<String> = collectDiffPath(svnDir.path, since, until)
 
-        val svnStatusPath = collectStatusPath(repoPath, since, until)
-        val svnDiffPath = collectDiffPath(repoPath, since, until)
+            // classMap 생성
+            statusClassMap = buildLatestClassMap(workTree, svnStatusPath)
+            diffClassMap = buildLatestClassMap(workTree, svnDiffPath)
 
-        svnStatusPath.forEach { path ->
-            println("svnStatusPath = ${path}")
+            val diffEntries = mapSourcesToClasses(svnDiffPath)
+            val statusEntries = mapSourcesToClasses(svnStatusPath)
+
+            createZip(outputZip) { zip ->
+                if (fileStatusType.allowsStatus()) {
+                    addZipEntry(zip, workTree, statusEntries)
+                }
+
+                if (fileStatusType.allowsStatus()) {
+                    addZipEntry(zip, workTree, diffEntries)
+                }
+
+                ScriptCreate()
+                    .getLegacyPatchScripts(
+                        listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
+                        deployServerDir
+                    ).forEach { (name, line) ->
+
+                        zip.putNextEntry(ZipEntry(name))
+                        zip.write(line.joinToString("\n").toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                    }
+            }
+
+            println("✅ Created ZIP: ${outputZip.absolutePath}")
         }
 
-        val diffEntries = mapSourcesToClasses(svnDiffPath, workTree)
-        val statusEntries = mapSourcesToClasses(svnStatusPath, workTree)
+        JOptionPane.showMessageDialog(
+            null,
+            """
+          배포가 완료되었습니다.
+          파일: ${repoPath.toString()}
+          시간: ${SimpleDateFormat("yyyy/MM/dd HH:mm:ss").format(Date())}
+        """.trimIndent(),
+            "완료",
+            JOptionPane.INFORMATION_MESSAGE
+        )
+    }
 
-        statusEntries.forEach { path ->
-            println("path = ${path}")
+    private fun buildLatestClassMap(
+        workTree: File, paths: List<String>
+    ): Map<String, String> {
+
+        val statusBaseNames = paths.filter { it.endsWith(".kt", true) || it.endsWith(".java", true) }
+            .map { File(it).nameWithoutExtension }.toSet()
+
+        // 2) 워크트리 전체를 스캔하며, 관심 있는 baseName만 수집
+        return Files.walk(workTree.toPath()).use { stream ->
+            stream.filter(Files::isRegularFile).filter { it.fileName.toString().endsWith(".class", true) }
+                // .class 이름에서 baseName 추출
+                .map { path ->
+                    val fileName = path.fileName.toString()
+                    val base = fileName.substringBeforeLast('.').substringBefore('$')
+                    Pair(base, path)
+                }
+                // 변경된 소스에 해당하는 baseName만 필터
+                .filter { (base, _) -> base in statusBaseNames }
+                // 그룹핑 후 최신 파일만 남김
+                .toList().groupBy({ it.first }, { it.second }).mapValues { (_, paths) ->
+                    paths.maxByOrNull { Files.getLastModifiedTime(it).toMillis() }!!.toAbsolutePath().toString()
+                }
         }
-//        createZip(outputZip){ zip ->
-//           if(fileStatusType.allowsStatus()){
-//               println("statusPath: $svnStatusPath")
-//               addZipEntry(zip,  workTree, statusEntries)
-//           }
-//
-//            if(fileStatusType.allowsStatus()){
-//                println("diffPath: $svnDiffPath")
-//                addZipEntry(zip,  workTree, diffEntries)
-//            }
-//        }
-
-        println("✅ Created ZIP: ${outputZip.absolutePath}")
     }
 
 
     private fun createZip(
-        output: File,
-        block: (ZipOutputStream) -> Unit
+        output: File, block: (ZipOutputStream) -> Unit
     ) {
         ZipOutputStream(Files.newOutputStream(output.toPath())).use(block)
     }
 
 
-    private fun addZipEntry(zip: ZipOutputStream, baseDir : File, paths : List<String>) {
+    private fun addZipEntry(zip: ZipOutputStream, baseDir: File, paths: List<String>) {
         val basePath = baseDir.toPath()
         paths.forEach { rel ->
             val file = if (Paths.get(rel).isAbsolute) File(rel) else File(baseDir, rel)
 
-           if (!file.exists()) return@forEach
+            if (!file.exists()) return@forEach
 
-           if(file.isDirectory){
-               Files.walk(file.toPath()).filter { Files.isRegularFile(it) }
-                   .forEach { child -> addZipFile(zip, basePath, child.toFile()) }
-           }else{
+            if (file.isDirectory) {
+                Files.walk(file.toPath()).filter { Files.isRegularFile(it) }
+                    .forEach { child -> addZipFile(zip, basePath, child.toFile()) }
+            } else {
                 addZipFile(zip, basePath, file)
-           }
+            }
 
         }
     }
 
-    private fun addZipFile(zip: ZipOutputStream, basePath : Path, file : File) {
-        val entryName = basePath.relativize(file.toPath())
-            .toString()
-            .replace(File.separatorChar, '/')
+    private fun addZipFile(zip: ZipOutputStream, basePath: Path, file: File) {
+        val entryName = basePath.relativize(file.toPath()).toString().replace(File.separatorChar, '/')
 
-        if (!SvnInfoCli.zippedEntries.add(entryName)) return
+        if (!zippedEntries.add(entryName)) return
 
         zip.putNextEntry(ZipEntry(entryName))
         FileInputStream(file).use { it.copyTo(zip) }
@@ -135,13 +167,13 @@ object SvnInfoCli {
     }
 
 
-    private fun collectStatusPath(rootPath: String, since : Date, until : Date): List<String> {
-        val svnDir = File(rootPath)
+    private fun collectStatusPath(rootPath: String, since: Date, until: Date): List<String> {
+        File(rootPath)
         val dateZone = ZoneId.systemDefault()
 
         val clientManager = createClientManagerWithCachedAuth()
-        val svnStatus = clientManager.statusClient
-        val svnDiff = clientManager.diffClient
+        clientManager.statusClient
+        clientManager.diffClient
 
         // SVN 상태 수집 로직
 
@@ -150,50 +182,51 @@ object SvnInfoCli {
 
         // SVNDepth / SVNRevision 없이 boolean 오버로드 사용
         client.statusClient.doStatus(
-            File(rootPath),
-            /* recursive       = */ true,
-            /* remote          = */ false,
-            /* reportExternals = */ false,
-            /* includeIgnored  = */ false
+            File(rootPath),/* recursive       = */
+            true,/* remote          = */
+            false,/* reportExternals = */
+            false,/* includeIgnored  = */
+            false
         ) { status ->
-            if (status.contentsStatus != SVNStatusType.STATUS_NORMAL) {
+            if (status.contentsStatus in setOf(
+                    SVNStatusType.STATUS_MODIFIED,
+                    SVNStatusType.STATUS_ADDED,
+                    SVNStatusType.STATUS_DELETED,
+                    SVNStatusType.STATUS_REPLACED
+                ) ) {
                 changedFiles.add(status.file)
             }
         }
 
-        return changedFiles.map { File(it.absolutePath) }
-            .filter {file ->
-                file.exists().also {  if (!it) print("Missing: $file")  }
-            }
-            .filter { file ->
-                val fileDate = Instant.ofEpochMilli(file.lastModified())
-                    .atZone(dateZone).toLocalDate()
-                !fileDate.isBefore(since.toInstant().atZone(ZoneId.systemDefault()).toLocalDate())
-                        && !fileDate.isAfter(until.toInstant().atZone(ZoneId.systemDefault()).toLocalDate())
-            }.map { it.absolutePath }
+        return changedFiles.map { File(it.absolutePath) }.filter { file ->
+            file.exists().also { if (!it) print("Missing: $file") }
+        }.filter { file ->
+            val fileDate = Instant.ofEpochMilli(file.lastModified()).atZone(dateZone).toLocalDate()
+            !fileDate.isBefore(since.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()) && !fileDate.isAfter(
+                until.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+            )
+        }.map { it.absolutePath }
     }
 
-    private fun collectDiffPath(rootPath: String, startDate : Date , endDate : Date): List<String> {
+    private fun collectDiffPath(rootPath: String, startDate: Date, endDate: Date): List<String> {
 
         val clientManager = createClientManagerWithCachedAuth()
 
         // SVN 상태 수집 로직
         val changedFiles = mutableListOf<File>()
-        try{
+        try {
 
-            clientManager.logClient.doLog(
-                /*path */          arrayOf(File(rootPath)),
-                /*startRevision*/  SVNRevision.create(startDate),
-                /*endRevision */   SVNRevision.create(endDate),
-                /*stopOnCopy  */   false,
-                /*discoverPaths*/  true,
-                /*limit */         0L /*제한 없음*/
-            )
-            /*ISVNLogEntryHandler*/     { logEntry ->
+            clientManager.logClient.doLog(/*path */          arrayOf(File(rootPath)),/*startRevision*/
+                SVNRevision.create(startDate),/*endRevision */
+                SVNRevision.create(endDate),/*stopOnCopy  */
+                false,/*discoverPaths*/
+                true,/*limit */
+                0L /*제한 없음*/
+            ){ logEntry ->
                 logEntry.changedPaths.values.forEach { change ->
                 }
             }
-        }catch (e: Exception) {
+        } catch (e: Exception) {
 //            val (user, passwd) = collectSvnCredentials()
 
 
@@ -204,35 +237,34 @@ object SvnInfoCli {
     }
 
     private fun mapSourcesToClasses(
-        sources: List<String>,
-        workTree: File
-    ): List<String> = sources
-        .flatMap { src ->
-            if (!src.endsWith(".kt") && !src.endsWith(".java")) return@flatMap listOf(src)
-            mapToClassEntry(src, workTree) ?: emptyList()
-        }
-        .distinct()
-
-    private fun mapToClassEntry(
-        src: String,
-        workTree: File
-    ): List<String>? {
-        val baseName = File(src).nameWithoutExtension
-        val pattern = Regex("^${Regex.escape(baseName)}(\\$.*)?\\.class$")
-
-        val entries = Files.walk(workTree.toPath())
-            .filter { path -> Files.isRegularFile(path) }
-            .filter { path -> pattern.matches(path.fileName.toString()) }
-            .map { path ->
-                workTree.toPath()
-                    .relativize(path)
-                    .toString()
-                    .replace(File.separatorChar, '/')
-            }.toList()
-
-        return entries
+        sources: List<String>
+    ): List<String> = sources.flatMap { src ->
+        if (!src.endsWith(".kt") && !src.endsWith(".java")) {
+            listOf(src)
+        } else {
+            val base = File(src).nameWithoutExtension
+            statusClassMap[base]?.let { listOf(it) }.orEmpty()
+        }.distinct()
     }
 
+    private fun mapToClassEntry(
+        baseName: String, workTree: File
+    ): List<String> {
+        val pattern = Regex("^${Regex.escape(baseName)}(\\$.*)?\\.class$")
+        return Files.walk(workTree.toPath()).filter(Files::isRegularFile)
+            .filter { pattern.matches(it.fileName.toString()) }.map { path ->
+                workTree.toPath().relativize(path).toString().replace(File.separatorChar, '/')
+            }.toList()
+    }
+
+    private fun completeAlert(msg : String){
+        val labels: Array<JLabel> = msg
+            .split("<br>")
+            .map { JLabel(it) }
+            .toTypedArray()
+
+        JOptionPane.showMessageDialog(null, labels, "Deploy Man", JOptionPane.INFORMATION_MESSAGE)
+    }
 
     /* SVN 계정 정보 받기*/
     private fun collectSvnCredentials(): Pair<String, String> {
@@ -257,11 +289,7 @@ object SvnInfoCli {
         )
 
         val result = JOptionPane.showConfirmDialog(
-            null,
-            message,
-            "SVN 로그인 정보 입력",
-            JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.QUESTION_MESSAGE
+            null, message, "SVN 로그인 정보 입력", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE
         )
 
         // 4) 취소나 닫기 선택 시 test() 호출 후 빈 Pair 반환
@@ -270,8 +298,7 @@ object SvnInfoCli {
         }
 
         // 5) OK 선택 시 입력값 검증
-        val user = userField.text.trim().takeIf { it.isNotEmpty() }
-            ?: throw IllegalStateException("사용자명이 입력되지 않았습니다.")
+        val user = userField.text.trim().takeIf { it.isNotEmpty() } ?: throw IllegalStateException("사용자명이 입력되지 않았습니다.")
         val pass = passField.password.concatToString().takeIf { it.isNotEmpty() }
             ?: throw IllegalStateException("비밀번호가 입력되지 않았습니다.")
 
@@ -279,13 +306,9 @@ object SvnInfoCli {
     }
 
 
-
-
-
     /** TortoiseSVN/CLI 공용 config 디렉터리 감지 */
     private fun detectSvnConfigDir(): File {
         val os = System.getProperty("os.name").lowercase()
-        println("OS: $os")
         return if (os.contains("win")) File(System.getenv("APPDATA"), "Subversion")
         else File("/Users/mac", ".subversion")
 
@@ -311,6 +334,14 @@ object SvnInfoCli {
     } ?: FileStatusType.ALL
 
     private fun parseDateArg(dateStr: String?, dateFmt: SimpleDateFormat): Date {
+        try {
+            val instant = Instant.parse(dateStr)
+            return Date.from(instant)
+        }catch (e : Exception){
+            // dateStr이 ISO 8601 형식이 아닐 경우
+            e.printStackTrace()
+        }
+
         return dateStr?.let {
             try {
                 dateFmt.parse(it)
@@ -321,10 +352,11 @@ object SvnInfoCli {
     }
 
 
-    private fun parseSvnDir(repoPath: String): File = File(repoPath).apply {
-        if (!exists() || !File(this, "config").exists()) {
-            error("ERROR: Not a valid Git repository: ${absolutePath}")
-        }
+    private fun parseSvnDir(repoPath: String): File {
+        val f = File(repoPath)
+        return if (f.name == ".svn") { f.parentFile
+        } else { f }
+
     }
 
     private fun determineOutputZip(svnDir: File): File {
@@ -348,25 +380,66 @@ object SvnInfoCli {
 
         // 3) 하나의 다이얼로그로 띄우기
         val result = JOptionPane.showConfirmDialog(
-            null,
-            panel,
-            "SVN 로그인 정보 입력",
-            JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.QUESTION_MESSAGE
+            null, panel, "SVN 로그인 정보 입력", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE
         )
 
         if (result != JOptionPane.OK_OPTION) {
             throw IllegalStateException("SVN 로그인 입력이 취소되었습니다.")
         }
 
-        val user = userField.text.trim().takeIf { it.isNotEmpty() }
-            ?: throw IllegalStateException("사용자명이 입력되지 않았습니다.")
-        val pass = passField.password.concatToString()
-            .takeIf { it.isNotEmpty() }
+        val user = userField.text.trim().takeIf { it.isNotEmpty() } ?: throw IllegalStateException("사용자명이 입력되지 않았습니다.")
+        val pass = passField.password.concatToString().takeIf { it.isNotEmpty() }
             ?: throw IllegalStateException("비밀번호가 입력되지 않았습니다.")
 
         return user to pass
     }
+
+
+
+
+    fun showProgressAndRun(
+        title: String = "SVN 배포 중…",
+        initialMessage: String = "잠시만 기다려 주세요…",
+        task: () -> Unit
+    ) {
+        // 1) 다이얼로그 & 컴포넌트 준비
+        val dialog = JDialog(null as Frame?, title, true).apply {
+            layout = BorderLayout(10, 10)
+
+            // 메시지 라벨
+            val label = JLabel(initialMessage).apply {
+                horizontalAlignment = JLabel.CENTER
+            }
+            add(label, BorderLayout.NORTH)
+
+            // 무한 모드 프로그레스 바
+            val progressBar = JProgressBar().apply {
+                isIndeterminate = true
+                preferredSize = Dimension(300, 20)
+            }
+            add(progressBar, BorderLayout.CENTER)
+
+            pack()
+            setLocationRelativeTo(null)
+        }
+
+        // 2) 백그라운드에서 실제 작업 수행
+        object : SwingWorker<Unit, Unit>() {
+            override fun doInBackground() {
+                task()
+            }
+            override fun done() {
+                // 작업 끝나면 다이얼로그 닫기
+                dialog.dispose()
+            }
+        }.execute()
+
+        // 3) 모달 다이얼로그 보여주기 (이 뒤는 블록됨)
+        dialog.isVisible = true
+    }
+
+
+
 
     private fun FileStatusType.allowsDiff() = this == FileStatusType.DIFF || this == FileStatusType.ALL
     private fun FileStatusType.allowsStatus() = this == FileStatusType.STATUS || this == FileStatusType.ALL

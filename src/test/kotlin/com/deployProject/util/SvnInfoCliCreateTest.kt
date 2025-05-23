@@ -12,6 +12,7 @@ import java.io.Console
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.UUID
 
 class SvnInfoCliCreateTest {
 
@@ -29,4 +30,19 @@ class SvnInfoCliCreateTest {
 
         SvnInfoCli.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, deployServerDir))
     }
+
+
+    @Test
+    fun `Jar파일 생성 테스트`() {
+
+        val since = "2025/05/10"
+        val until = ""
+        val filestatus = "ALL"
+        val randomFileName = "GitInfoJarFile/"+UUID.randomUUID().toString();
+        val deployServerDir = "/home/bjw/deployProject"
+
+        JarCreator.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, randomFileName, deployServerDir))
+
+    }
+
 }
