@@ -16,8 +16,8 @@ import java.util.UUID
 
 class SvnInfoCliCreateTest {
 
-    private val repoGitDir = File("D:/DevSpace/NCRC_Space/ncrc_icarevalue_admin/")
-    //private val repoGitDir = File("/Users/mac/IdeaProjects/deployProject/.git")
+//    private val repoGitDir = File("D:/DevSpace/NCRC_Space/ncrc_icarevalue_admin/")
+    private val repoGitDir = File("/Users/mac/IdeaProjects/icarevalue_home/")
 
     @Test
     fun `캐시된_인증으로_로컬_변경파일_조회_테스트`() {

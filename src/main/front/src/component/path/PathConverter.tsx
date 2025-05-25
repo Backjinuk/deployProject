@@ -1,19 +1,22 @@
-import React, { useState, forwardRef } from 'react';
+import React, {useState, forwardRef} from 'react';
 import axios from 'axios';
 import DatePicker from 'react-datepicker';
-import { ko } from 'date-fns/locale';
+import {ko} from 'date-fns/locale';
 import 'react-datepicker/dist/react-datepicker.css';
 
-import { Site } from '../../api/sites';
-import { styles } from '../../styles/PathConverterStyles';
+import {Site} from '../../api/sites';
+import {styles} from '../../styles/PathConverterStyles';
+import Swal from "sweetalert2";
 
-interface Props { site: Site; }
+interface Props {
+    site: Site;
+}
 
 // custom input
 const CustomInput = forwardRef<HTMLInputElement, {
     value?: string;
     onClick?: () => void;
-}>(({ value, onClick }, ref) => (
+}>(({value, onClick}, ref) => (
     <input
         ref={ref}
         value={value}
@@ -23,10 +26,10 @@ const CustomInput = forwardRef<HTMLInputElement, {
     />
 ));
 
-const PathConverter: React.FC<Props> = ({ site }) => {
-    const [startDate, setStartDate]     = useState<Date | null>(new Date());
-    const [endDate, setEndDate]         = useState<Date | null>(new Date());
-    const [gitEnabled, setGitEnabled]   = useState(true);
+const PathConverter: React.FC<Props> = ({site}) => {
+    const [startDate, setStartDate] = useState<Date | null>(new Date());
+    const [endDate, setEndDate] = useState<Date | null>(new Date());
+    const [gitEnabled, setGitEnabled] = useState(true);
     const [statusEnabled, setStatusEnabled] = useState(true);
 
     const extraction = () => {
@@ -34,9 +37,9 @@ const PathConverter: React.FC<Props> = ({ site }) => {
 
         if (gitEnabled && statusEnabled) {
             fileStatusType = 'ALL'
-        }else if (gitEnabled){
+        } else if (gitEnabled) {
             fileStatusType = 'GIT'
-        }else if (statusEnabled){
+        } else if (statusEnabled) {
             fileStatusType = 'STATUS'
         }
 
@@ -54,41 +57,61 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             return;
         }
 
+        // 로딩 시작
+        Swal.fire({
+            title: '다운로드 중입니다...',
+            text: '잠시만 기다려 주세요.',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            },
+        });
+
         axios.post('/api/git/extraction', {
-            siteId:    site.id,
-            since: startDate?.toISOString(),
-            until:   endDate?.toISOString(),
-            localPath : site.localPath,
-            homePath: site.homePath,
-            fileStatusType: fileStatusType,
-            targetOs: targetOs,
-        },
-            {responseType: 'blob'} // blob으로 응답 받기
-        )
-            .then(res => {
-                const date = new Date();
-                // 응답 헤더에서 파일 이름 추출
-                const disposition = res.headers['content-disposition']
-                let filename = `${site.text}-${date}-deployCli.exe`
-                if (disposition) {
-                    const match = disposition.match(/filename="(.+)"/)
-                    if (match && match[1]) filename = match[1]
-                }
+                siteId: site.id,
+                since: startDate?.toISOString(),
+                until: endDate?.toISOString(),
+                localPath: site.localPath,
+                homePath: site.homePath,
+                fileStatusType: fileStatusType,
+                targetOs: targetOs,
+            }, {responseType: 'blob',}
+        ).then(res => {
+            const date = new Date().toISOString().replace(/[:.]/g, '-');
+            const disposition = res.headers['content-disposition'];
+            let filename = `deployCli.exe`;
+            if (disposition) {
+                const match = disposition.match(/filename="(.+)"/);
+                if (match && match[1]) filename = match[1];
+            }
 
-                const blob = new Blob([res.data], { type: 'content-type' });
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement('a');
-               a.href = url
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                URL.revokeObjectURL(url);
-                a.remove();
+            const blob = new Blob([res.data], {type: res.headers['content-type']});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+            a.remove();
 
-                console.log('추출 성공', filename)
-
-            })
-            .catch(err => console.error('추출 실패:', err));
+            // 성공 알림
+            Swal.fire({
+                icon: 'success',
+                title: '다운로드 완료!',
+                text: filename,
+                timer: 2000,
+                showConfirmButton: false,
+            });
+        })
+            .catch((err) => {
+                console.error('추출 실패:', err);
+                Swal.fire({
+                    icon: 'error',
+                    title: '다운로드 실패',
+                    text: '문제가 발생했습니다.',
+                });
+            });
     };
 
     return (
@@ -99,7 +122,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     selected={startDate}
                     onChange={setStartDate}
                     dateFormat="yyyy-MM-dd"
-                    customInput={<CustomInput />}
+                    customInput={<CustomInput/>}
                     calendarClassName="custom-calendar"
                 />
 
@@ -110,7 +133,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     selected={endDate}
                     onChange={setEndDate}
                     dateFormat="yyyy-MM-dd"
-                    customInput={<CustomInput />}
+                    customInput={<CustomInput/>}
                     calendarClassName="custom-calendar"
                 />
 

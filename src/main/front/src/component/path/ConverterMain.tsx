@@ -7,7 +7,7 @@ import {Site} from "../../api/sites";
 import SiteSelector from "./StieSelector";
 import PathConverter from "./PathConverter";
 import NickNameModal from "../login/NickNameModal";
-import PathModalMain from "../pathModal/PathModalMain";
+import PathUpdateModal from "../pathModal/PathUpdateModal";
 import PathAddModal from "../pathModal/PathAddModal";
 
 import {styles} from "../../styles/ConverterStyles"; // TS 스타일 임포트
@@ -18,6 +18,7 @@ const ConverterMain: React.FC = () => {
     const [nickNameShowModal, setNickNameShowModal] = useState<boolean>(true);
     const [pathModalShow, setPathModalShow] = useState<boolean>(false);
     const [pathAddModalShow, setPathAddModalShow] = useState<boolean>(false);
+    const [loading, setLoading] = useState<boolean>(false);
 
     useEffect(() => {
         const stored = localStorage.getItem("deployUser");
@@ -25,10 +26,12 @@ const ConverterMain: React.FC = () => {
             const deployUser = JSON.parse(stored);
             fetchSites(deployUser);
             setNickNameShowModal(false);
+
         } else {
             setNickNameShowModal(true);
         }
-    }, []);
+    }, [loading]);
+
 
     const HoverableButton: React.FC<{
         base: React.CSSProperties; hover: React.CSSProperties; children: React.ReactNode; onClick?: () => void;
@@ -63,17 +66,28 @@ const ConverterMain: React.FC = () => {
     };
 
     const handleLogout = () => {
+        setSites([]);
         localStorage.removeItem("deployUser");
         setNickNameShowModal(true);
-        setSites([]);
         setSelected(null);
+
     };
+
+    const handlePathUpdateModalShow = () => {
+        setPathModalShow(!pathModalShow);
+        setLoading(!loading);
+    }
+
+    const handlePathAddModalShow = () => {
+        setPathAddModalShow(!pathAddModalShow);
+        setLoading(!loading);
+    }
 
     return (<div style={styles.warraper}>
         <div style={{...styles.container, padding: "2rem 1rem"}}>
             <NickNameModal show={nickNameShowModal} onSave={handleSaveNick}/>
-            <PathModalMain show={pathModalShow} onPath={() => setPathModalShow((v) => !v)}/>
-            <PathAddModal show={pathAddModalShow} onPathAdd={() => setPathAddModalShow((v) => !v)}/>
+            <PathUpdateModal show={pathModalShow} onPath={() => handlePathUpdateModalShow()}/>
+            <PathAddModal show={pathAddModalShow} onPathAdd={() => handlePathAddModalShow()}/>
 
             {/* ─── 헤더 ────────────────────────────── */}
             <div style={styles.converterHeader}>

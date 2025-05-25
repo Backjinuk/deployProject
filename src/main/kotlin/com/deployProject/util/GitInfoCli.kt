@@ -63,18 +63,45 @@ object GitInfoCli {
         fileStatusType: FileStatusType,
         deployServerDir: String
     ) {
-        val gitDir = parseGitDir(repoPath)
-        val workTree = gitDir.parentFile
-        val outputZip = determineOutputZip(gitDir)
+        // --- 디버깅: 파라미터 확인 ---
+        println("▶ repoPath: $repoPath")
+        println("▶ since:    $since")
+        println("▶ until:    $until")
+        println("▶ status:   $fileStatusType")
+        println("▶ deployDir:$deployServerDir")
 
+        // 1) gitDir, workTree, outputZip
+        val gitDir = parseGitDir(repoPath)
+        println("▶ gitDir:     ${gitDir.absolutePath}")
+        val workTree = gitDir.parentFile
+        println("▶ workTree:   ${workTree.absolutePath}")
+        val outputZip = determineOutputZip(gitDir)
+        println("▶ outputZip:  ${outputZip.absolutePath}")
+
+        // 2) 레포 열기
+        println("▶ Opening Git repository at ${gitDir.absolutePath} …")
         val git = Git.open(gitDir)
         val repo = git.repository
+        println("▶ Repository branch: ${repo.branch}")
 
+        // 3) 상태/차이 경로 수집
         val statusPaths = collectStatusPaths(git, since, until)
-        val diffPaths = collectDiffPaths(repo, since, until)
+        println("▶ statusPaths (${statusPaths.size}):")
+        statusPaths.forEach { println("   - $it") }
 
+        val diffPaths = collectDiffPaths(repo, since, until)
+        println("▶ diffPaths   (${diffPaths.size}):")
+        diffPaths.forEach { println("   - $it") }
+
+        // 4) 클래스 매핑 결과
         val diffEntries = mapSourcesToClasses(diffPaths, workTree)
+        println("▶ diffEntries (${diffEntries.size}):")
+        diffEntries.forEach { println("   - $it") }
+
         val statusEntries = mapSourcesToClasses(statusPaths, workTree)
+        println("▶ statusEntries (${statusEntries.size}):")
+        statusEntries.forEach { println("   - $it") }
+
 
         // Create ZIP file
         createZip(outputZip) { zip ->

@@ -1,34 +1,47 @@
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import axios from "axios";
 import {Site} from "../../api/sites";
 import Swal from "sweetalert2"; // 위에서 정의한 인터페이스
 
-export default function PathModalMain({show, onPath}: { show: boolean, onPath: () => void }) {
+export default function PathUpdateModal({show, onPath}: { show: boolean, onPath: () => void }) {
     const [selectedPath, setSelectedPath] = useState<number | string>('');
     const [pathList, setPathList] = useState<Site[]>([]);
-
-    if (show) {
-
-    }
-
-    // 모든 필드 업데이트를 위한 제너릭 핸들러
-    const handleFieldChange = (id: number | string, field: keyof Site, value: string) => {
-        setPathList(prev => prev.map(p => (p.id === id ? {...p, [field]: value} : p)));
+    const modalRef = useRef<HTMLDivElement>(null);
 
 
-        axios.post("/api/updatePath", {"id": id, "field": field, "value": value})
-    };
 
     useEffect(() => {
+       const handleClickOutside = (event: MouseEvent) => {
+           if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+               // 모달 내부 클릭은 무시
+               return onPath?.();
+           }
+       }
+
         if (show) {
+            document.addEventListener("mousedown", handleClickOutside);
+
             const deployUser = JSON.parse(localStorage.getItem('deployUser') || "{}");
             axios.post<Site[]>("/api/pathList", deployUser)
                 .then(res => setPathList(res.data))
                 .catch(console.error);
         }
-    }, [show]);
+
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+
+    }, [show, onPath]);
 
     if (!show) return null;
+
+    // 모든 필드 업데이트를 위한 제너릭 핸들러
+    const handleFieldChange = (id: number | string, field: keyof Site, value: string) => {
+        setPathList(prev => prev.map(p => (p.id === id ? {...p, [field]: value} : p)));
+
+        axios.post("/api/updatePath", {"id": id, "field": field, "value": value})
+    };
+
 
     const deletePath = (id: number) => {
         axios.post("/api/deletePath", {"id": id, "useYn": "N"}).then(() => {
@@ -39,7 +52,7 @@ export default function PathModalMain({show, onPath}: { show: boolean, onPath: (
     }
 
     return (<div className="modal d-block" tabIndex={-1} style={{backgroundColor: "rgba(0,0,0,0.5)",}}>
-        <div className="modal-dialog modal-dialog-centered" style={{maxWidth: "800px"}}>
+        <div className="modal-dialog modal-dialog-centered" style={{maxWidth: "800px"}} ref={modalRef}>
             <div className="modal-content">
 
                 {/* 헤더 */}

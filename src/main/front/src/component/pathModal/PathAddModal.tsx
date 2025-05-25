@@ -1,4 +1,4 @@
-import {useState} from "react";
+import {use, useEffect, useRef, useState} from "react";
 import axios from "axios";
 import Swal from "sweetalert2";
 
@@ -6,30 +6,38 @@ type  PathInput = {
     text: string;
     homePath: string;
     localPath: string;
-    javaOld: string;
-    javaNew: string;
-    xmlOld: string;
-    xmlNew: string;
-    jspOld: string;
-    jspNew: string;
-    scriptOld: string;
-    scriptNew: string;
 };
 
 export default function PathAddModal({show, onPathAdd}: { show: boolean; onPathAdd: () => void; }) {
 
-// 각 필드에 대한 state를 단일 객체로 관리
+    // 각 필드에 대한 state를 단일 객체로 관리
     const [form, setForm] = useState({
         text: "",
         homePath: "",
         localPath: "",
         userSeq: JSON.parse(localStorage.getItem('deployUser') || "{}").id || "",
     });
+    const modelRef = useRef<HTMLDivElement>(null);
 
+    // 모달 외부 클릭 시 닫기
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (modelRef.current && !modelRef.current.contains(event.target as Node)){
+                onPathAdd?.();
+            }
+        }
+
+        if (show) {
+            document.addEventListener("mousedown", handleClickOutside);
+        }
+
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);}
+
+
+    }, [show, onPathAdd]);
 
     const savedPath = () => {
-
-        alert(111);
         axios.post('/api/savedPath', form).then( () => {
             Swal.fire({
                 position: "center",
@@ -38,16 +46,22 @@ export default function PathAddModal({show, onPathAdd}: { show: boolean; onPathA
                 showConfirmButton: false,
                 timer: 1500
             }).then( () => {
+                form.text = "";
+                form.homePath = "";
+                form.localPath = "";
+
+                // 모달 닫기
                 onPathAdd();
             });
         })
     }
 
     if (!show) return null;
+
     return (
         <div className="modal d-block" tabIndex={-1} style={{backgroundColor: "rgba(0,0,0,0.5)",}}>
 
-            <div className="modal-dialog modal-dialog-centered" style={{maxWidth: "800px"}}>
+            <div className="modal-dialog modal-dialog-centered" style={{maxWidth: "800px"}} ref={modelRef}>
                 <div className="modal-content">
 
                     {/* 헤더 */}

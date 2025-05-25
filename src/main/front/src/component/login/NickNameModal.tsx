@@ -30,6 +30,7 @@ const NicknameModal: React.FC<Props> = ({ show, onSave }) => {
                             placeholder="닉네임을 입력하세요"
                             value={nick}
                             onChange={e => setNick(e.target.value)}
+                            onKeyDown={ event => {if (event.key === 'Enter') handleSave(); }}
                         />
                     </div>
                     <div className="modal-footer">

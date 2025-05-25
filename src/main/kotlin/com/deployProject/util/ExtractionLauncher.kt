@@ -1,9 +1,13 @@
 package com.deployProject.util
 
+import org.hibernate.query.`QueryLogging_$logger`
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.util.*
 
 object ExtractionLauncher {
+    private val log = LoggerFactory.getLogger(ExtractionLauncher::class.java)
+
     @JvmStatic
     fun main(args: Array<String>) {
         // args가 비어 있으면 defaults.properties 로드를 시도
@@ -23,7 +27,6 @@ object ExtractionLauncher {
             ?.path
             ?.replace(File.separator, "/")
 
-        println("repoDir = $repoDir")
 
         val relPath = props.getProperty("relPath", "")
         val since = props.getProperty("since")
@@ -31,6 +34,8 @@ object ExtractionLauncher {
         val statusType = props.getProperty("statusType", "ALL")
         val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
 
+
+        print("repoDir: $repoDir, relPath: $relPath, since: $since, until: $until, statusType: $statusType, deployServerDir: $deployServerDir")
 
         // GitInfoCli에 전달
         repoDir?.let {

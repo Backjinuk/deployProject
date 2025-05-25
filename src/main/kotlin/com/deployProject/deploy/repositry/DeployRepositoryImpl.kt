@@ -7,6 +7,7 @@ import com.deployProject.deploy.domain.site.SiteDto
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
 import org.modelmapper.ModelMapper
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Repository
 import kotlin.jvm.java
 
@@ -16,13 +17,18 @@ class DeployRepositoryImpl(
     private val modelMapper: ModelMapper
 ) : DeployRepository {
 
+    private val logger = LoggerFactory.getLogger(DeployRepositoryImpl::class.java);
+
     override fun getSites(id: Long): List<SiteDto> {
+        logger.info("getSites started")
+
         val query = entityManager.createQuery(
             "SELECT s " +
                     "FROM Site s " +
                     "where s.userSeq = :id " +
-                    "and useYn != 'N'  or useYn IS NULL",
-            Site::class.java)
+                    "and (useYn != 'N' or useYn IS NULL)",
+            Site::class.java
+        )
 
         query.setParameter("id", id)
 
@@ -34,6 +40,7 @@ class DeployRepositoryImpl(
     }
 
     override fun findByUserName(userName: String): DeployUserDto {
+        logger.info("findByUserName started")
         val query =
             entityManager.createQuery("SELECT u FROM DeployUser u WHERE u.userName = :userName", DeployUser::class.java)
         query.setParameter("userName", userName)
@@ -45,16 +52,20 @@ class DeployRepositoryImpl(
 
 
     override fun addUser(deployUser: DeployUser) {
+        logger.info("addUser started")
+
         entityManager.persist(deployUser)
     }
 
     override fun getPathList(userSeq: Long): List<SiteDto> {
+        logger.info("getPathList started")
         val query = entityManager.createQuery(
             "SELECT s " +
                     "FROM Site s " +
                     "WHERE s.userSeq = :userSeq " +
-                    "and s.useYn != 'N' or s.useYn is null ",
-            Site::class.java)
+                    "and (s.useYn != 'N' or s.useYn is null) ",
+            Site::class.java
+        )
         query.setParameter("userSeq", userSeq)
 
         return query.resultList.map { site ->
@@ -64,12 +75,13 @@ class DeployRepositoryImpl(
 
     @Transactional
     override fun updatePath(site: Site) {
+        logger.info("updatePath started")
 
         val assignments = mutableListOf<String>().apply {
-            site.text     ?.let { add("s.text      = :text") }
-            site.homePath ?.let { add("s.homePath  = :homePath") }
+            site.text?.let { add("s.text      = :text") }
+            site.homePath?.let { add("s.homePath  = :homePath") }
             site.localPath?.let { add("s.localPath = :localPath") }
-            site.useYn    ?.let { add("s.useYn = :useYn")}
+            site.useYn?.let { add("s.useYn = :useYn") }
         }
 
         // 수정할 필드가 없으면 바로 종료
@@ -84,11 +96,11 @@ class DeployRepositoryImpl(
 
         // 4) Query 생성 및 파라미터 바인딩
         val query = entityManager.createQuery(jpql)
-        site.id       ?.let { query.setParameter("id", it) }
-        site.text     ?.let { query.setParameter("text",      it) }
-        site.homePath ?.let { query.setParameter("homePath",  it) }
+        site.id?.let { query.setParameter("id", it) }
+        site.text?.let { query.setParameter("text", it) }
+        site.homePath?.let { query.setParameter("homePath", it) }
         site.localPath?.let { query.setParameter("localPath", it) }
-        site.useYn    ?.let { query.setParameter("useYn", it) }
+        site.useYn?.let { query.setParameter("useYn", it) }
 
         // 5) 쿼리 실행
         query.executeUpdate()
@@ -98,6 +110,8 @@ class DeployRepositoryImpl(
     }
 
     override fun savedPath(site: Site) {
-       entityManager.persist(site)
+        logger.info("savedPath started")
+
+        entityManager.persist(site)
     }
 }

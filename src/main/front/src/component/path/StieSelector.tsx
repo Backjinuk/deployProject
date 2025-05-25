@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import { Site } from '../../api/sites';
 
 interface Props {
@@ -7,7 +7,17 @@ interface Props {
     onSelect: (id: number) => void;
 }
 
-const SiteSelector: React.FC<Props> = ({ sites, selectedId, onSelect }) => (
+const SiteSelector: React.FC<Props> = ({ sites, selectedId, onSelect }) => {
+
+    useEffect(() => {
+        sites.forEach(site => {
+            console.log(`Site ID: ${site.id}, Text: ${site.text}`);
+        })
+    });
+
+    return (
+
+
     <div className="mb-3">
         <label htmlFor="siteSelect" className="form-label fw-bold">사이트 선택</label>
         <select
@@ -22,6 +32,7 @@ const SiteSelector: React.FC<Props> = ({ sites, selectedId, onSelect }) => (
             ))}
         </select>
     </div>
-);
+    )
+};
 
 export default SiteSelector;
