@@ -1,12 +1,18 @@
 package com.deployProject.deploy.service
 
+import com.badlogicgames.packr.Packr
+import com.badlogicgames.packr.PackrConfig
 import com.deployProject.deploy.domain.extraction.ExtractionDto
+import com.deployProject.deploy.domain.extraction.TargetOsStatus
 import com.deployProject.util.JarCreator
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import java.io.BufferedOutputStream
 import java.io.File
-import java.nio.file.Paths
+import java.io.FileOutputStream
 import java.util.*
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 @Service
 class ExtractionService(
@@ -16,147 +22,86 @@ class ExtractionService(
     private val logger = LoggerFactory.getLogger(ExtractionService::class.java)
 
     fun extractGitInfo(extractionDto: ExtractionDto): File {
+        // 1) baseDir/exe-output만 쓰도록 변경
+        val baseDir   = File("GitInfoJarFile", UUID.randomUUID().toString())
+        val deployJarName = "deploy-project-cli.jar"
+        val jarFile       = File(baseDir, deployJarName)
 
-        // 1) Fat JAR 생성
-        val randomDir = File("GitInfoJarFile", UUID.randomUUID().toString()).apply { mkdirs() }
-        val deployJar = File(randomDir, "deploy-project-cli.jar")
+        // 2) fat-JAR 생성 → outputDir에 바로 쓰기
         try {
             jarCreator.main(arrayOf(
                 extractionDto.localPath,
-                "",
+                "",  // relPath
                 extractionDto.since,
                 extractionDto.until,
                 extractionDto.fileStatusType,
-                randomDir.path,
+                baseDir.absolutePath,  // **여기가 바뀌었습니다**
                 extractionDto.homePath
             ) as Array<String>)
         } catch (e: Exception) {
             logger.error("Error during jar creation", e)
             throw e
         }
+        logger.info("Fat JAR created at: ${jarFile.absolutePath}")
 
-        logger.info("Fat JAR created at: ${deployJar.absolutePath}")
-        // 2) jlink로 커스텀 런타임 이미지 생성
-        val runtimeImage = packWithJLink(deployJar)
-
-
-        // 3) jpackage로 앱 이미지 생성
-        return packWithJPackage(deployJar, runtimeImage)
-    }
-
-    private fun packWithJLink(jarFile: File): File {
-        logger.debug("Packing with jlink: jarFile=${jarFile.absolutePath}")
-        val javaHome = System.getProperty("java.home")
-        val jdepsExe = Paths.get(javaHome, "bin", "jdeps").toString()
-
-        // jdeps --print-module-deps 로 모듈 목록만 추출
-        val rawOutput = runCapture(
-            jdepsExe,
-            "--print-module-deps",
-            jarFile.absolutePath
-        )
-
-        val modules = rawOutput
-            .lineSequence()
-            .firstOrNull()
-            ?.trim()
-            ?: throw RuntimeException("jdeps did not output any modules")
-
-        logger.debug("Detected modules: $modules")
-
-        // 기존 runtime-image 디렉터리 삭제 및 재생성
-        val outputDir = File(jarFile.parentFile, "runtime-image")
-        if (outputDir.exists()) {
-            outputDir.deleteRecursively()
-        }
+        // 3) 이제 EXE용 outputDir만 따로 만들어서
+        val outputDir = File(baseDir, "exe-output")
+        if (outputDir.exists()) outputDir.deleteRecursively()
         outputDir.mkdirs()
 
-        // jlink 실행 (최대 2분 타임아웃)
-        val jlinkExe = Paths.get(javaHome, "bin", "jlink").toString()
-        val jlinkCmd = listOf(
-            jlinkExe,
-            "--add-modules", modules,
-            "--output", outputDir.absolutePath,
-            "--launcher", "deploy=${jarFile.name}",
-            "--no-header-files",
-            "--no-man-pages",
-            "--compress=0"
-        )
-        logger.debug("Running jlink with timeout: ${jlinkCmd.joinToString(" ")}")
-        val proc = ProcessBuilder(*jlinkCmd.toTypedArray()).inheritIO().start()
-        // 타임아웃 설정: 120초
-        if (!proc.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) {
-            proc.destroyForcibly()
-            throw RuntimeException("jlink timed out after 120 seconds")
-        }
-        if (proc.exitValue() != 0) {
-            throw RuntimeException("jlink failed with exit code ${proc.exitValue()}")
-        }
+        // 3) Packr로 EXE 생성 → 같은 outputDir에
+        packWithPackr(jarFile, extractionDto.targetOs!!, outputDir)
 
-        return outputDir
+        // exe-output 폴더 전체를 ZIP으로 묶어서 반환
+        val zipFile = File(outputDir.parentFile, "exe-output.zip")
+        zipDirectory(outputDir, zipFile)
+        return zipFile
     }
 
-    private fun packWithJPackage(jarFile: File, runtimeImage: File): File {
-        logger.debug("Packing with jpackage: jarFile=${jarFile.absolutePath}, runtimeImage=${runtimeImage.absolutePath}")
+    // packWithPackr에 outputDir 파라미터를 추가합니다.
+    private fun packWithPackr(
+        jarFile: File,
+        targetOs: TargetOsStatus,
+        outputDir: File
+    ): File {
+        val config = PackrConfig().apply {
+            platform    = if (targetOs == TargetOsStatus.WINDOWS)
+                PackrConfig.Platform.Windows64
+            else
+                PackrConfig.Platform.MacOS
+            jdk = "C:/Program Files/Java/jdk-17"
+//            jdk         = "/Users/mac/.sdkman/candidates/java/current/bin/java"
+            executable  = "deploy-project-cli"
+            classpath   = listOf(jarFile.absolutePath)
+            mainClass   = "com.deployProject.util.ExtractionLauncher"
+            vmArgs      = listOf("-Xmx512m")
+            outDir      = outputDir
+            useZgcIfSupportedOs = true
+        }
+        logger.info("PackrConfig: $config")
+        Packr().pack(config)
 
-
-        val outputDir = File(jarFile.parentFile, "package").apply {
-            if (exists()) deleteRecursively()
-            mkdirs()
-        }
-        val javaHome = System.getProperty("java.home")
-        val jpackageExe = Paths.get(javaHome, "bin", "jpackage").toString()
-        val jpackageCmd = listOf(
-            jpackageExe,
-            "--name", "DeployProjectCLI",
-            "--app-version", "1.0.0",
-            "--runtime-image", runtimeImage.absolutePath,
-            "--input", jarFile.parentFile.absolutePath,
-            "--main-jar", jarFile.name,
-            "--main-class", "com.deployProject.util.ExtractionLauncher",
-            "--type", "app-image",
-            "--dest", outputDir.absolutePath
-        )
-        logger.debug("Running jpackage with timeout: ${jpackageCmd.joinToString(" ")}")
-        val proc = ProcessBuilder(*jpackageCmd.toTypedArray())
-            .inheritIO()
-            .start()
-        // 2분 타임아웃 설정
-        if (!proc.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) {
-            proc.destroyForcibly()
-            throw RuntimeException("jpackage timed out after 120 seconds")
-        }
-        if (proc.exitValue() != 0) {
-            throw RuntimeException("jpackage failed with exit code ${proc.exitValue()}")
-        }
-        return outputDir.resolve("DeployProjectCLI.app")
+        val exeName = if (targetOs == TargetOsStatus.WINDOWS)
+            "deploy-project-cli.exe"
+        else
+            "deploy-project-cli"
+        return File(outputDir, exeName)
     }
 
-    private fun runCapture(vararg cmd: String): String {
-        logger.debug("Executing command: ${cmd.joinToString(" ")}")
-        val proc = ProcessBuilder(*cmd)
-            .redirectErrorStream(true)
-            .start()
-        val exitCode = proc.waitFor()
-        val output = proc.inputStream.bufferedReader().readText()
-        if (exitCode != 0) {
-            logger.error("Command failed (exit $exitCode): ${cmd.joinToString(" ")}\n$output")
-            throw RuntimeException("Command failed: ${cmd.joinToString(" ")} (exit $exitCode)\n$output")
+    private fun zipDirectory(sourceDir: File, targetZip: File) {
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
+            sourceDir.walkTopDown()
+                .filter { it.isFile }
+                .forEach { file ->
+                    val entryName = sourceDir.toPath().relativize(file.toPath()).toString().replace('\\','/')
+                    zos.putNextEntry(ZipEntry(entryName))
+                    file.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
         }
-        logger.debug("Command output: $output")
-        return output
     }
 
-    private fun runExec(vararg cmd: String) {
-        val proc = ProcessBuilder(*cmd)
-            .inheritIO()
-            .start()
-        if (proc.waitFor() != 0) {
-            throw RuntimeException("Command failed: ${cmd.joinToString(" ")} (exit ${proc.exitValue()})")
-        }
-    }
 }
-
 
 
 //private fun packWithPackr(jarFile: File, targetOs: TargetOsStatus): File {
@@ -185,4 +130,109 @@ class ExtractionService(
 //    }
 //
 //    return File(outputDir, "deploy-project-cli.exe")
+//}
+
+
+//private fun packWithJLink(jarFile: File): File {
+//    val javaHome = System.getProperty("java.home")
+//
+//    // 1) jdeps 대신 고정 모듈 리스트 사용
+//    val modules = listOf(
+//        "java.base",
+//        "java.logging",
+//        "java.sql",
+//        "java.desktop",
+//        "java.naming"
+//    ).joinToString(",")
+//    logger.info("Using fixed modules for jlink: $modules")
+//
+//    // 2) 기존 runtime-image 디렉터리 삭제 및 재생성
+//    val outputDir = File(jarFile.parentFile, "runtime-image")
+//    if (outputDir.exists()) outputDir.deleteRecursively()
+////        outputDir.mkdirs()
+//
+//    // 3) jlink 실행 (최대 2분 타임아웃)
+//    val jlinkExe = Paths.get(javaHome, "bin", "jlink").toString()
+//    val cmd = listOf(
+//        jlinkExe,
+//        "--add-modules", modules,
+//        "--output", outputDir.absolutePath,
+//        "--launcher", "deploy=${jarFile.name}",
+//        "--no-header-files",
+//        "--no-man-pages",
+//        "--compress=0"
+//    )
+//    logger.info("Running jlink: ${cmd.joinToString(" ")}")
+//    val proc = ProcessBuilder(*cmd.toTypedArray())
+//        .inheritIO()
+//        .start()
+//    if (!proc.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) {
+//        proc.destroyForcibly()
+//        throw RuntimeException("jlink timed out after 120 seconds")
+//    }
+//    if (proc.exitValue() != 0) {
+//        throw RuntimeException("jlink failed with exit code ${proc.exitValue()}")
+//    }
+//
+//    return outputDir
+//}
+//
+//
+//private fun packWithJPackage(jarFile: File): File {
+//    val outputDir = File(jarFile.parentFile, "package").apply {
+//        if (exists()) deleteRecursively()
+//        mkdirs()
+//    }
+//    val javaHome    = System.getProperty("java.home")
+//    val jpackageExe = Paths.get(javaHome, "bin", "jpackage").toString()
+//
+//    val jpackageCmd = listOf(
+//        jpackageExe,
+//        "--name",        "DeployProjectCLI",
+//        "--app-version", "1.0.0",
+//        "--input",       jarFile.parentFile.absolutePath,
+//        "--main-jar",    jarFile.name,
+//        "--main-class",  "com.deployProject.util.ExtractionLauncher",
+//        "--type",        "app-image",
+//        "--dest",        outputDir.absolutePath
+//    )
+//    logger.info("Running jpackage: ${jpackageCmd.joinToString(" ")}")
+//    val proc = ProcessBuilder(*jpackageCmd.toTypedArray())
+//        .inheritIO()
+//        .start()
+//
+//    if (!proc.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) {
+//        proc.destroyForcibly()
+//        throw RuntimeException("jpackage timed out after 120 seconds")
+//    }
+//    if (proc.exitValue() != 0) {
+//        throw RuntimeException("jpackage failed with exit code ${proc.exitValue()}")
+//    }
+//
+//    // .app 이미지 디렉터리 반환
+//    return outputDir.resolve("DeployProjectCLI.app")
+//}
+//
+//private fun runCapture(vararg cmd: String): String {
+//    logger.info("Executing command: ${cmd.joinToString(" ")}")
+//    val proc = ProcessBuilder(*cmd)
+//        .redirectErrorStream(true)
+//        .start()
+//    val exitCode = proc.waitFor()
+//    val output = proc.inputStream.bufferedReader().readText()
+//    if (exitCode != 0) {
+//        logger.error("Command failed (exit $exitCode): ${cmd.joinToString(" ")}\n$output")
+//        throw RuntimeException("Command failed: ${cmd.joinToString(" ")} (exit $exitCode)\n$output")
+//    }
+//    logger.debug("Command output: $output")
+//    return output
+//}
+//
+//private fun runExec(vararg cmd: String) {
+//    val proc = ProcessBuilder(*cmd)
+//        .inheritIO()
+//        .start()
+//    if (proc.waitFor() != 0) {
+//        throw RuntimeException("Command failed: ${cmd.joinToString(" ")} (exit ${proc.exitValue()})")
+//    }
 //}

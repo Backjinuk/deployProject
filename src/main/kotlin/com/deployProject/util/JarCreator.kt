@@ -110,7 +110,7 @@ object JarCreator {
         val untilDate     = args.getOrNull(3)?.takeIf { it.isNotBlank() }
             ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd")).toString()
         val statusType    = args.getOrNull(4)?.takeIf { it.isNotBlank() } ?: "ALL"
-        val jarFilePath   = "./${randomFileName}/deploy-project-cli.jar"
+        val jarFilePath   = "${randomFileName}/deploy-project-cli.jar"
         val deployServerDir = args.getOrNull(6)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/"
 
         // 2) defaults 맵 구성

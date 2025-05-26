@@ -70,23 +70,33 @@ object SvnInfoCli {
             val diffEntries = mapSourcesToClasses(svnDiffPath)
             val statusEntries = mapSourcesToClasses(svnStatusPath)
 
+            val webappDir = File(workTree, "src/main/webapp")
+
+// diffEntries, statusEntries: MapSourcesToClasses 로 얻은 전체 절대 경로 리스트
+            val entries = (diffEntries + statusEntries).distinct()
+
+// 로컬 src/main/webapp/ 부분을 제거해서 'WEB-INF/jsp/…' 같은 상대경로 리스트 생성
+            val relativeEntries = entries.map { absPath ->
+                File(absPath)
+                    .relativeTo(webappDir)      // src/main/webapp/ 다음부터 상대경로
+                    .path
+                    .replace("\\", "/")         // 윈도우 '\' 제거
+            }
+
+// ZIP 생성 부분
             createZip(outputZip) { zip ->
                 if (fileStatusType.allowsStatus()) {
                     addZipEntry(zip, workTree, statusEntries)
                 }
-
                 if (fileStatusType.allowsStatus()) {
                     addZipEntry(zip, workTree, diffEntries)
                 }
 
                 ScriptCreate()
-                    .getLegacyPatchScripts(
-                        listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
-                        deployServerDir
-                    ).forEach { (name, line) ->
-
-                        zip.putNextEntry(ZipEntry(name))
-                        zip.write(line.joinToString("\n").toByteArray(Charsets.UTF_8))
+                    .getLegacyPatchScripts(relativeEntries, deployServerDir)
+                    .forEach { (scriptName, lines) ->
+                        zip.putNextEntry(ZipEntry(scriptName))
+                        zip.write(lines.joinToString("\n").toByteArray(Charsets.UTF_8))
                         zip.closeEntry()
                     }
             }

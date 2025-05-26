@@ -79,7 +79,7 @@ const PathConverter: React.FC<Props> = ({site}) => {
         ).then(res => {
             const date = new Date().toISOString().replace(/[:.]/g, '-');
             const disposition = res.headers['content-disposition'];
-            let filename = `deployCli.exe`;
+            let filename = `deployCli-${date}.zip`;
             if (disposition) {
                 const match = disposition.match(/filename="(.+)"/);
                 if (match && match[1]) filename = match[1];

@@ -15,6 +15,7 @@ class ScriptCreate {
     fun getLegacyPatchScripts(
         changedFiles: List<String>, deployDir: String
     ): List<Pair<String, List<String>>> {
+        val deployDir = deployDir.trimEnd('/', '\\')
         val dateExpr = "$(date +'%Y%m%d')"
         val scripts = mutableListOf<Pair<String, List<String>>>()
         val basicInfo = listOf(
