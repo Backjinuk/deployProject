@@ -1,5 +1,7 @@
-package com.deployProject.util
+package com.deployProject.core
 
+import com.deployProject.core.GitInfoCli
+import com.deployProject.core.SvnInfoCli
 import org.hibernate.query.`QueryLogging_$logger`
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -33,9 +35,6 @@ object ExtractionLauncher {
         val until = props.getProperty("until")
         val statusType = props.getProperty("statusType", "ALL")
         val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
-
-
-        print("repoDir: $repoDir, relPath: $relPath, since: $since, until: $until, statusType: $statusType, deployServerDir: $deployServerDir")
 
         // GitInfoCli에 전달
         repoDir?.let {

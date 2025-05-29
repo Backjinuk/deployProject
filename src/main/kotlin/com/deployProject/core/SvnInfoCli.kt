@@ -1,4 +1,5 @@
-package com.deployProject.util
+package com.deployProject.core
+
 
 import com.deployProject.deploy.domain.site.FileStatusType
 import de.regnis.q.sequence.core.QSequenceAssert.assertTrue
@@ -25,7 +26,7 @@ import java.util.zip.ZipOutputStream
 import javax.swing.*
 import java.util.Date
 
-object SvnInfoCli {
+class SvnInfoCli {
 
     private val log = LoggerFactory.getLogger(SvnInfoCli::class.java)
     private val zippedEntries = mutableSetOf<String>()
@@ -35,19 +36,21 @@ object SvnInfoCli {
     /**
      * 진입점: <gitDir> [sinceDate] [untilDate] [fileStatusType]
      */
-    @JvmStatic
-    fun main(args: Array<String>) {
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) {
 
-        val repoPath = args.getOrNull(0)
-            ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
+            val repoPath = args.getOrNull(0)
+                ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
 
-        val dateFmt = SimpleDateFormat("yyyy/MM/dd")
-        val since = parseDateArg(args.getOrNull(2), dateFmt)
-        val until = parseDateArg(args.getOrNull(3), dateFmt)
-        val statusType = parseStatusType(args.getOrNull(4))
-        val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
+            val dateFmt = SimpleDateFormat("yyyy/MM/dd")
+            val since = SvnInfoCli().parseDateArg(args.getOrNull(2)?.substringBefore('T'), dateFmt)
+            val until = SvnInfoCli().parseDateArg(args.getOrNull(3)?.substringBefore('T'), dateFmt)
+            val statusType = SvnInfoCli().parseStatusType(args.getOrNull(4))
+            val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
 
-        run(repoPath, since, until, statusType, deployServerDir)
+            SvnInfoCli().run(repoPath, since, until, statusType, deployServerDir)
+        }
     }
 
     @Throws(IOException::class)
@@ -72,10 +75,8 @@ object SvnInfoCli {
 
             val webappDir = File(workTree, "src/main/webapp")
 
-// diffEntries, statusEntries: MapSourcesToClasses 로 얻은 전체 절대 경로 리스트
             val entries = (diffEntries + statusEntries).distinct()
 
-// 로컬 src/main/webapp/ 부분을 제거해서 'WEB-INF/jsp/…' 같은 상대경로 리스트 생성
             val relativeEntries = entries.map { absPath ->
                 File(absPath)
                     .relativeTo(webappDir)      // src/main/webapp/ 다음부터 상대경로
@@ -83,7 +84,7 @@ object SvnInfoCli {
                     .replace("\\", "/")         // 윈도우 '\' 제거
             }
 
-// ZIP 생성 부분
+            // ZIP 생성 부분
             createZip(outputZip) { zip ->
                 if (fileStatusType.allowsStatus()) {
                     addZipEntry(zip, workTree, statusEntries)

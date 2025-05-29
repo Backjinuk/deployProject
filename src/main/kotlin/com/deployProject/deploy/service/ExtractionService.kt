@@ -69,8 +69,8 @@ class ExtractionService(
                 PackrConfig.Platform.Windows64
             else
                 PackrConfig.Platform.MacOS
-            jdk = "C:/Program Files/Java/jdk-17"
-//            jdk         = "/Users/mac/.sdkman/candidates/java/current/bin/java"
+//            jdk = "C:/Program Files/Java/jdk-17"
+            jdk         = "/Users/mac/.sdkman/candidates/java/current/bin/java"
             executable  = "deploy-project-cli"
             classpath   = listOf(jarFile.absolutePath)
             mainClass   = "com.deployProject.util.ExtractionLauncher"

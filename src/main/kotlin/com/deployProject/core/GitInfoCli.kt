@@ -1,4 +1,4 @@
-package com.deployProject.util
+package com.deployProject.core
 
 import com.deployProject.deploy.domain.site.FileStatusType
 import org.eclipse.jgit.api.Git
@@ -6,12 +6,12 @@ import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.slf4j.LoggerFactory
-import org.springframework.data.util.StreamUtils.zip
+import java.awt.BorderLayout
+import java.awt.Dimension
+import java.awt.Frame
 import java.io.File
 import java.io.FileInputStream
-import java.io.IOException
 import java.nio.file.Files
-import java.nio.file.Path
 import java.nio.file.Paths
 import java.text.SimpleDateFormat
 import java.time.Instant
@@ -19,38 +19,45 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Date
-import java.util.Map.entry
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import javax.swing.JDialog
+import javax.swing.JLabel
 import javax.swing.JOptionPane
-import javax.swing.JPasswordField
-import kotlin.io.path.relativeTo
+import javax.swing.JProgressBar
+import javax.swing.SwingWorker
 
 /**
  * GitInfoCli: Git 상태 변경 및 diff 경로를 수집하여 ZIP으로 패키징하는 CLI 유틸리티
  */
-object GitInfoCli {
+class GitInfoCli {
     private val log = LoggerFactory.getLogger(GitInfoCli::class.java)
     private val zippedEntries = mutableSetOf<String>()
 
     /**
      * 진입점: <gitDir> [sinceDate] [untilDate] [fileStatusType]
      */
-    @JvmStatic
-    fun main(args: Array<String>) {
+    companion object {
+
+        @JvmStatic
+        fun main(args: Array<String>) {
+
+            val repoPath = args.getOrNull(0) ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
+            val dateFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+            val since = GitInfoCli().parseDateArg(args.getOrNull(2)?.substringBefore('T'), dateFmt)
+            val until = GitInfoCli().parseDateArg(args.getOrNull(3)?.substringBefore('T'), dateFmt)
+            val statusType =GitInfoCli().parseStatusType(args.getOrNull(4))
+            val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
 
 
-
-        val repoPath = args.getOrNull(0)
-            ?: error("Usage: java -jar git-info-cli.jar <gitDir> [sinceDate] [untilDate] [fileStatusType]")
-
-        val dateFmt = DateTimeFormatter.ofPattern("yyyy/MM/dd")
-        val since = parseDateArg(args.getOrNull(2), dateFmt)
-        val until = parseDateArg(args.getOrNull(3), dateFmt)
-        val statusType = parseStatusType(args.getOrNull(4))
-        val deployServerDir = args.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/."
-
-        run(repoPath, since, until, statusType, deployServerDir)
+            GitInfoCli().run(
+                repoPath,
+                since,
+                until,
+                statusType,
+                deployServerDir
+            )
+        }
     }
 
     // ───────────────────────────────────────────────────────────
@@ -63,69 +70,60 @@ object GitInfoCli {
         fileStatusType: FileStatusType,
         deployServerDir: String
     ) {
-        // --- 디버깅: 파라미터 확인 ---
-        println("▶ repoPath: $repoPath")
-        println("▶ since:    $since")
-        println("▶ until:    $until")
-        println("▶ status:   $fileStatusType")
-        println("▶ deployDir:$deployServerDir")
 
-        // 1) gitDir, workTree, outputZip
-        val gitDir = parseGitDir(repoPath)
-        println("▶ gitDir:     ${gitDir.absolutePath}")
-        val workTree = gitDir.parentFile
-        println("▶ workTree:   ${workTree.absolutePath}")
-        val outputZip = determineOutputZip(gitDir)
-        println("▶ outputZip:  ${outputZip.absolutePath}")
+        showProgressAndRun(initialMessage = "SVN 배포를 시작합니다…") {
+            // 1) gitDir, workTree, outputZip
+            val gitDir = parseGitDir(repoPath)
+            val workTree = gitDir.parentFile
+            val outputZip = determineOutputZip(gitDir)
 
-        // 2) 레포 열기
-        println("▶ Opening Git repository at ${gitDir.absolutePath} …")
-        val git = Git.open(gitDir)
-        val repo = git.repository
-        println("▶ Repository branch: ${repo.branch}")
+            // 2) 레포 열기
+            val git = Git.open(gitDir)
+            val repo = git.repository
 
-        // 3) 상태/차이 경로 수집
-        val statusPaths = collectStatusPaths(git, since, until)
-        println("▶ statusPaths (${statusPaths.size}):")
-        statusPaths.forEach { println("   - $it") }
+            // 3) 상태/차이 경로 수집
+            val statusPaths = collectStatusPaths(git, since, until)
+            val diffPaths = collectDiffPaths(repo, since, until)
 
-        val diffPaths = collectDiffPaths(repo, since, until)
-        println("▶ diffPaths   (${diffPaths.size}):")
-        diffPaths.forEach { println("   - $it") }
-
-        // 4) 클래스 매핑 결과
-        val diffEntries = mapSourcesToClasses(diffPaths, workTree)
-        println("▶ diffEntries (${diffEntries.size}):")
-        diffEntries.forEach { println("   - $it") }
-
-        val statusEntries = mapSourcesToClasses(statusPaths, workTree)
-        println("▶ statusEntries (${statusEntries.size}):")
-        statusEntries.forEach { println("   - $it") }
+            // 4) 클래스 매핑 결과
+            val diffEntries = mapSourcesToClasses(diffPaths, workTree)
+            val statusEntries = mapSourcesToClasses(statusPaths, workTree)
 
 
-        // Create ZIP file
-        createZip(outputZip) { zip ->
+            // Create ZIP file
+            createZip(outputZip) { zip ->
 
-            if (fileStatusType.allowsDiff()) {
-                addZipFiles(zip, workTree, diffEntries)
-            }
-            if (fileStatusType.allowsStatus()) {
-                addZipFiles(zip, workTree, statusEntries)
-            }
-
-            ScriptCreate()
-                .getLegacyPatchScripts(
-                    listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
-                    deployServerDir
-                ).forEach { (name, line) ->
-
-                    zip.putNextEntry(ZipEntry(name))
-                    zip.write( line.joinToString ("\n") .toByteArray(Charsets.UTF_8) )
-                    zip.closeEntry()
+                if (fileStatusType.allowsDiff()) {
+                    addZipFiles(zip, workTree, diffEntries)
                 }
+                if (fileStatusType.allowsStatus()) {
+                    addZipFiles(zip, workTree, statusEntries)
+                }
+
+                ScriptCreate()
+                    .getLegacyPatchScripts(
+                        listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
+                        deployServerDir
+                    ).forEach { (name, line) ->
+
+                        zip.putNextEntry(ZipEntry(name))
+                        zip.write(line.joinToString("\n").toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                    }
+            }
         }
 
-        println("✅ Created ZIP: ${outputZip.absolutePath}")
+        JOptionPane.showMessageDialog(
+            null,
+            """
+          배포가 완료되었습니다.
+          파일: ${repoPath.toString()}
+          시간: ${SimpleDateFormat("yyyy/MM/dd HH:mm:ss").format(Date())}
+        """.trimIndent(),
+            "완료",
+            JOptionPane.INFORMATION_MESSAGE
+        )
+
     }
 
     // ───────────────────────────────────────────────────────────
@@ -134,13 +132,13 @@ object GitInfoCli {
     private fun parseDateArg(
         arg: String?,
         formatter: DateTimeFormatter
-    ): LocalDate = arg
-        ?.takeIf { it.isNotBlank() }
-        ?.let {
-            try { LocalDate.parse(it, formatter) }
-            catch (e: Exception) { LocalDate.now() }
+    ): LocalDate {
+        try {
+            return  LocalDate.parse(arg, formatter)
+        } catch (e: Exception) {
+            error("Invalid date format: $arg. Expected format: ${formatter}")
         }
-        ?: LocalDate.now()
+    }
 
     private fun parseStatusType(arg: String?): FileStatusType = arg
         ?.let { value ->
@@ -271,13 +269,62 @@ object GitInfoCli {
         val basePath = baseDir.toPath()
         paths.forEach { rel ->
             val file = if (Paths.get(rel).isAbsolute) File(rel) else File(baseDir, rel)
-            val entryName = basePath.relativize(file.toPath())
-                .toString().replace(File.separatorChar, '/')
-            if (!zippedEntries.add(entryName)) return@forEach
+
+            if (!file.exists() || !file.isFile) {
+                println("Skipping missing file: ${file.absolutePath}")
+                return@forEach
+            }
+
+            val entryName = basePath.relativize(file.toPath()) .toString().replace(File.separatorChar, '/')
+            if (!zippedEntries.add(entryName)){
+                println("Skipping already zipped entry: $entryName")
+                return@forEach
+            }
             zip.putNextEntry(ZipEntry(entryName))
             FileInputStream(file).use { it.copyTo(zip) }
             zip.closeEntry()
         }
+    }
+
+    fun showProgressAndRun(
+        title: String = "GIT 배포 중…",
+        initialMessage: String = "잠시만 기다려 주세요…",
+        task: () -> Unit
+    ) {
+        // 1) 다이얼로그 & 컴포넌트 준비
+        val dialog = JDialog(null as Frame?, title, true).apply {
+            layout = BorderLayout(10, 10)
+
+            // 메시지 라벨
+            val label = JLabel(initialMessage).apply {
+                horizontalAlignment = JLabel.CENTER
+            }
+            add(label, BorderLayout.NORTH)
+
+            // 무한 모드 프로그레스 바
+            val progressBar = JProgressBar().apply {
+                isIndeterminate = true
+                preferredSize = Dimension(300, 20)
+            }
+            add(progressBar, BorderLayout.CENTER)
+
+            pack()
+            setLocationRelativeTo(null)
+        }
+
+        // 2) 백그라운드에서 실제 작업 수행
+        object : SwingWorker<Unit, Unit>() {
+            override fun doInBackground() {
+                task()
+            }
+            override fun done() {
+                // 작업 끝나면 다이얼로그 닫기
+                dialog.dispose()
+            }
+        }.execute()
+
+        // 3) 모달 다이얼로그 보여주기 (이 뒤는 블록됨)
+        dialog.isVisible = true
     }
 
 
