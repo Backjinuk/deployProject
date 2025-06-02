@@ -4,7 +4,7 @@ import com.deployProject.deploy.domain.deployUser.DeployUser
 import com.deployProject.deploy.domain.deployUser.DeployUserDto
 import com.deployProject.deploy.domain.site.Site
 import com.deployProject.deploy.domain.site.SiteDto
-import com.deployProject.deploy.repositry.DeployRepository
+import com.deployProject.deploy.repository.DeployRepository
 import jakarta.transaction.Transactional
 import org.modelmapper.ModelMapper
 import org.springframework.stereotype.Service

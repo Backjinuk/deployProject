@@ -4,7 +4,7 @@ import com.badlogicgames.packr.Packr
 import com.badlogicgames.packr.PackrConfig
 import com.deployProject.deploy.domain.extraction.ExtractionDto
 import com.deployProject.deploy.domain.extraction.TargetOsStatus
-import com.deployProject.util.JarCreator
+import com.deployProject.cli.utilCli.JarCreator
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.BufferedOutputStream
@@ -69,11 +69,15 @@ class ExtractionService(
                 PackrConfig.Platform.Windows64
             else
                 PackrConfig.Platform.MacOS
-//            jdk = "C:/Program Files/Java/jdk-17"
-            jdk         = "/Users/mac/.sdkman/candidates/java/current/bin/java"
+
+           jdk =  if (targetOs == TargetOsStatus.WINDOWS)
+               "C:/Program Files/Java/jdk-17"
+            else
+             "/Users/mac/.sdkman/candidates/java/current/bin/java"
+
             executable  = "deploy-project-cli"
             classpath   = listOf(jarFile.absolutePath)
-            mainClass   = "com.deployProject.util.ExtractionLauncher"
+            mainClass   = "com.deployProject.cli.ExtractionLauncher"
             vmArgs      = listOf("-Xmx512m")
             outDir      = outputDir
             useZgcIfSupportedOs = true

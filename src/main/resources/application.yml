@@ -1,5 +1,7 @@
 name: deployProject
 
+server:
+  port: 9090
 
 spring:
   datasource:

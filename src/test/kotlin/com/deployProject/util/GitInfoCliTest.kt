@@ -1,14 +1,12 @@
 package com.deployProject.util
 
+import com.deployProject.cli.ExtractionLauncher
+import com.deployProject.cli.utilCli.JarCreator
 import org.junit.jupiter.api.Test
-import org.springframework.test.web.reactive.server.XpathAssertions
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.UUID
-import java.util.zip.ZipFile
-import kotlin.test.assertTrue
-import kotlin.test.fail
 
 class GitInfoCliTest {
 
@@ -25,7 +23,7 @@ class GitInfoCliTest {
         val filestatus = "ALL"
         val deployServerDir = "/home/bjw/deployProject"
 
-        GitInfoCli.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, deployServerDir))
+        ExtractionLauncher.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, deployServerDir))
     }
 
 

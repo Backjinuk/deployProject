@@ -1,17 +1,9 @@
 package com.deployProject.util
 
-import org.junit.jupiter.api.Assertions.assertTrue
+import com.deployProject.cli.ExtractionLauncher
+import com.deployProject.cli.utilCli.JarCreator
 import org.junit.jupiter.api.Test
-import org.tmatesoft.svn.core.auth.BasicAuthenticationManager
-import org.tmatesoft.svn.core.wc.SVNClientManager
-import org.tmatesoft.svn.core.wc.SVNInfo
-import org.tmatesoft.svn.core.wc.SVNRevision
-import org.tmatesoft.svn.core.wc.SVNStatusType
-import org.tmatesoft.svn.core.wc.SVNWCUtil
-import java.io.Console
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.UUID
 
 class SvnInfoCliCreateTest {
@@ -28,7 +20,7 @@ class SvnInfoCliCreateTest {
             val filestatus = "ALL"
             val deployServerDir = "/home/bjw/deployProject"
 
-        SvnInfoCli.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, deployServerDir))
+        ExtractionLauncher.main(arrayOf(repoGitDir.absolutePath, "", since, until, filestatus, deployServerDir))
     }
 
 

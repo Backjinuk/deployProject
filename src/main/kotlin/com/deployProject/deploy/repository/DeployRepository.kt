@@ -1,4 +1,4 @@
-package com.deployProject.deploy.repositry
+package com.deployProject.deploy.repository
 
 import com.deployProject.deploy.domain.deployUser.DeployUser
 import com.deployProject.deploy.domain.deployUser.DeployUserDto
