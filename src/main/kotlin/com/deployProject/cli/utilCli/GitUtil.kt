@@ -16,6 +16,7 @@ import java.util.zip.ZipOutputStream
 import javax.swing.JDialog
 import javax.swing.JFrame
 import javax.swing.JLabel
+import javax.swing.JOptionPane
 import javax.swing.JProgressBar
 import javax.swing.SwingWorker
 
@@ -54,6 +55,16 @@ object GitUtil {
         } catch (e: Exception) {
             error("잘못된 날짜 형식: '$arg'. 기대 형식: $fmt")
         }
+    }
+
+    fun parseDateArg(dateStr: String?, dateFmt: SimpleDateFormat): Date {
+        return dateStr?.let {
+            try {
+                dateFmt.parse(it)
+            } catch (e: Exception) {
+                error("Invalid date format: $it. Expected format: yyyy/MM/dd")
+            }
+        } ?: Date()
     }
 
     /**
@@ -185,7 +196,7 @@ object GitUtil {
         task: () -> Unit
     ) {
         val dialog = JDialog(null as JFrame?, title, true).apply {
-            layout = BorderLayout(10, 10)
+            layout = BorderLayout(15, 40)
             add(JLabel(initialMessage), BorderLayout.NORTH)
             add(JProgressBar().apply { isIndeterminate = true }, BorderLayout.CENTER)
             pack()

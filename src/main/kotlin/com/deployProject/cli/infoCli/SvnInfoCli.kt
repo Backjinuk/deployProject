@@ -1,11 +1,12 @@
 package com.deployProject.cli.infoCli
 
 import com.deployProject.cli.DeployCliScript
-import com.deployProject.deploy.domain.site.FileStatusType
 import com.deployProject.cli.utilCli.GitUtil
 import com.deployProject.cli.utilCli.GitUtil.allowsDiff
 import com.deployProject.cli.utilCli.GitUtil.allowsStatus
+import com.deployProject.deploy.domain.site.FileStatusType
 import org.slf4j.LoggerFactory
+import org.tmatesoft.svn.core.SVNException
 import org.tmatesoft.svn.core.wc.SVNClientManager
 import org.tmatesoft.svn.core.wc.SVNRevision
 import org.tmatesoft.svn.core.wc.SVNStatusType
@@ -15,13 +16,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Date
+import java.util.*
 import java.util.zip.ZipEntry
-import javax.swing.JLabel
-import javax.swing.JOptionPane
-import javax.swing.JPanel
-import javax.swing.JPasswordField
-import javax.swing.JTextField
+import javax.swing.*
 
 class SvnInfoCli {
 
@@ -30,43 +27,43 @@ class SvnInfoCli {
     fun svnCliExecution(
         repoPath: String, since: Date, until: Date, fileStatusType: FileStatusType, deployServerDir: String
     ) {
-        GitUtil.showProgressAndRun(initialMessage = "SVN 배포를 시작합니다…") {
-            val svnDir = GitUtil.parseDir(repoPath, "svn")
-            val workTree = if (svnDir.name == ".svn") svnDir.parentFile else svnDir
-            val outputZip = GitUtil.determineOutputZip(svnDir)
+        GitUtil.showProgressAndRun(title = "SVN 작업중...", initialMessage = "SVN 추출를 시작합니다…") {
+        val svnDir = GitUtil.parseDir(repoPath, "svn")
+        val workTree = if (svnDir.name == ".svn") svnDir.parentFile else svnDir
+        val outputZip = GitUtil.determineOutputZip(svnDir)
 
-            // 수집된 경로
-            val statusPaths = collectStatusPaths(svnDir.path, since, until)
-            val diffPaths = collectDiffPaths(svnDir.path, since, until)
+        // 수집된 경로
+        val statusPaths = collectStatusPaths(svnDir.path, since, until)
+        val diffPaths = collectDiffPaths(svnDir.path, since, until)
 
-            // 클래스 매핑
-            GitUtil.buildLatestClassMap(workTree, statusPaths + diffPaths)
-            val statusEntries = GitUtil.mapSourcesToClasses(statusPaths)
-            val diffEntries = GitUtil.mapSourcesToClasses(diffPaths)
+        // 클래스 매핑
+        GitUtil.buildLatestClassMap(workTree, statusPaths + diffPaths)
+        val statusEntries = GitUtil.mapSourcesToClasses(statusPaths)
+        val diffEntries = GitUtil.mapSourcesToClasses(diffPaths)
 
-            // webapp-relative 경로 변환
-            val webapp = File(workTree, "src/main/webapp")
-            val entries =
-                (statusEntries + diffEntries).distinct().map { File(it).relativeTo(webapp).path.replace('\\', '/') }
+        // webapp-relative 경로 변환
+        val webapp = File(workTree, "src/main/webapp")
+        val entries =
+            (statusEntries + diffEntries).distinct().map { File(it).relativeTo(webapp).path.replace('\\', '/') }
 
-            // ZIP 생성
-            GitUtil.createZip() { zip ->
-                if (fileStatusType.allowsStatus()) GitUtil.addZipEntry(zip, workTree, statusEntries)
-                if (fileStatusType.allowsDiff()) GitUtil.addZipEntry(zip, workTree, diffEntries)
+        // ZIP 생성
+        GitUtil.createZip { zip ->
+            if (fileStatusType.allowsStatus()) GitUtil.addZipEntry(zip, workTree, statusEntries)
+            if (fileStatusType.allowsDiff()) GitUtil.addZipEntry(zip, workTree, diffEntries)
 
-                DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
-                    zip.putNextEntry(ZipEntry(name))
-                    zip.write(lines.joinToString("\n").toByteArray())
-                    zip.closeEntry()
-                }
+            DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(lines.joinToString("\n").toByteArray())
+                zip.closeEntry()
             }
+        }
 
-            println("✅ Created ZIP: ${outputZip.absolutePath}")
+        log.info("✅ Created ZIP: ${outputZip.absolutePath}")
         }
 
         JOptionPane.showMessageDialog(
             null,
-            "배포가 완료되었습니다.\n파일: $repoPath\n시간: ${SimpleDateFormat("yyyy/MM/dd HH:mm:ss").format(Date())}",
+            "추출이 완료되었습니다.",
             "완료",
             JOptionPane.INFORMATION_MESSAGE
         )
@@ -105,13 +102,18 @@ class SvnInfoCli {
         val client = createClientManagerWithCachedAuth()
         val paths = mutableListOf<String>()
 
-        client.logClient.doLog(
-            arrayOf(File(root)), SVNRevision.create(start), SVNRevision.create(end), false, true, 0L
-        ) { logEntry ->
-            logEntry.changedPaths.values.forEach { change ->
-                paths.add(change.path)
+        try{
+            client.logClient.doLog(
+                arrayOf(File(root)), SVNRevision.create(start), SVNRevision.create(end), false, true, 0L
+            ) { logEntry ->
+                logEntry.changedPaths.values.forEach { change ->
+                    paths.add(change.path)
+                }
             }
+        }catch (e : SVNException){
+            log.info("SVN 로그 수집 중 오류 발생: ${e.message}")
         }
+
         return paths
     }
 

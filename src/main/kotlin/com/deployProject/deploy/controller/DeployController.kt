@@ -18,7 +18,6 @@ class DeployController(
 
     @RequestMapping("/api/sites")
     fun getSites(@RequestBody deployUserDto : DeployUserDto): List<SiteDto> {
-        println("getSites " + deployUserDto.id)
        return deployService.getSites( deployUserDto.id);
     }
 

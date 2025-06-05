@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Paths
 import java.util.*
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -18,14 +19,25 @@ import java.util.zip.ZipOutputStream
 class ExtractionService(
     private val jarCreator: JarCreator = JarCreator
 ) {
-
+    private val os =  System.getProperty("os.name").lowercase()
     private val logger = LoggerFactory.getLogger(ExtractionService::class.java)
 
     fun extractGitInfo(extractionDto: ExtractionDto): File {
         // 1) baseDir/exe-output만 쓰도록 변경
-        val baseDir   = File("GitInfoJarFile", UUID.randomUUID().toString())
-        val deployJarName = "deploy-project-cli.jar"
-        val jarFile       = File(baseDir, deployJarName)
+
+        var baseDir: File = File("GitInfoJarFile", UUID.randomUUID().toString())
+
+        if (!os.contains("windows") && !os.contains("mac")) {
+            // Linux인 경우, 사용자 홈 디렉터리 하위에 생성
+            val wd = Paths.get("").toAbsolutePath()
+            val projectRoot = wd.parent?.parent
+                ?: throw IllegalStateException("작업 디렉터리 기준으로 두 단계 상위가 존재하지 않습니다.")
+
+            baseDir   = File(projectRoot.toAbsolutePath().toString() + "/GitInfoJarFile", UUID.randomUUID().toString())
+        }
+
+        val  deployJarName = "deploy-project-cli.jar"
+        val  jarFile = File(baseDir, deployJarName)
 
         // 2) fat-JAR 생성 → outputDir에 바로 쓰기
         try {
@@ -64,16 +76,19 @@ class ExtractionService(
         targetOs: TargetOsStatus,
         outputDir: File
     ): File {
+
         val config = PackrConfig().apply {
             platform    = if (targetOs == TargetOsStatus.WINDOWS)
                 PackrConfig.Platform.Windows64
             else
                 PackrConfig.Platform.MacOS
 
-           jdk =  if (targetOs == TargetOsStatus.WINDOWS)
-               "C:/Program Files/Java/jdk-17"
+            jdk =  if ( os.contains("windows"))
+                "C:/Program Files/Java/jdk-17"
+            else if( os.contains("mac"))
+                "/Users/mac/.sdkman/candidates/java/current"
             else
-             "/Users/mac/.sdkman/candidates/java/current/bin/java"
+                "/home/bjw/.sdkman/candidates/java/current"
 
             executable  = "deploy-project-cli"
             classpath   = listOf(jarFile.absolutePath)

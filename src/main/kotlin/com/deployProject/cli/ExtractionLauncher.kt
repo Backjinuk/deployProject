@@ -3,8 +3,10 @@ package com.deployProject.cli
 import com.deployProject.cli.infoCli.GitInfoCli
 import com.deployProject.cli.infoCli.SvnInfoCli
 import com.deployProject.cli.utilCli.GitUtil
+import com.deployProject.cli.utilCli.GitUtil.parseDateArg
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -31,15 +33,21 @@ object ExtractionLauncher {
 
         props.getProperty("relPath", "") as String
 
-        // since와 until은 날짜 형식이므로, DateTimeFormatter를 사용하여 파싱
-        val sinceGit: LocalDate = GitUtil.parseDateArg( props.getProperty("since").substringBefore('T'), DateTimeFormatter.ofPattern("yyyy-MM-dd") )
-        val untilGit: LocalDate = GitUtil.parseDateArg( props.getProperty("until").substringBefore('T'), DateTimeFormatter.ofPattern("yyyy-MM-dd") )
+        val since = props.getProperty("since").substringBefore('T')
+        val until = props.getProperty("until").substringBefore('T')
 
-        val sinceSvn: Date = Date.from(sinceGit.atStartOfDay(ZoneId.systemDefault()).toInstant())
-        val untilSvn: Date = Date.from(untilGit.atStartOfDay(ZoneId.systemDefault()).toInstant())
+        // since와 until은 날짜 형식이므로, DateTimeFormatter를 사용하여 파싱
+        val sinceGit: LocalDate = GitUtil.parseDateArg( since, DateTimeFormatter.ofPattern("yyyy-MM-dd") )
+        val untilGit: LocalDate = GitUtil.parseDateArg( until, DateTimeFormatter.ofPattern("yyyy-MM-dd") )
+
+        val sdf = SimpleDateFormat("yyyy-MM-dd")
+        val sinceSvn: Date = GitUtil.parseDateArg(since, sdf)
+        val untilSvn: Date = GitUtil.parseDateArg(until, sdf)
+
 
         val statusType = GitUtil.parseStatusType(props.getProperty("statusType", "ALL"))
         val deployServerDir = props.getProperty("deployServerDir", "/home/bjw/deployProject/.")
+
 
         // GitInfoCli에 전달
         repoDir.let {
