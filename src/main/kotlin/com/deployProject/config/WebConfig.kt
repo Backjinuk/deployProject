@@ -9,7 +9,7 @@ class WebConfig : WebMvcConfigurer {
 
     override fun addCorsMappings(registry: CorsRegistry) {
         registry.addMapping("/**")
-            .allowedOrigins("http://localhost:8080")
+            .allowedOrigins("http://localhost:8080", "http://backjin.iptime.org:8080/", )
             .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
 
     }
