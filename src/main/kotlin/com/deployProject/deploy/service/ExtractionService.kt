@@ -25,6 +25,8 @@ class ExtractionService(
     fun extractGitInfo(extractionDto: ExtractionDto): File {
         // 1) baseDir/exe-output만 쓰도록 변경
 
+        println("System.getProperty(\"java.class.path\") = ${System.getProperty("java.class.path")}")
+
         var baseDir: File = File("GitInfoJarFile", UUID.randomUUID().toString())
 
         if (!os.contains("windows") && !os.contains("mac")) {
@@ -38,6 +40,8 @@ class ExtractionService(
 
         val  deployJarName = "deploy-project-cli.jar"
         val  jarFile = File(baseDir, deployJarName)
+
+        logger.info("▶︎ FAT-JAR 생성 시작")
 
         // 2) fat-JAR 생성 → outputDir에 바로 쓰기
         try {
@@ -54,19 +58,26 @@ class ExtractionService(
             logger.error("Error during jar creation", e)
             throw e
         }
-        logger.info("Fat JAR created at: ${jarFile.absolutePath}")
+
+        logger.info("▶︎ FAT-JAR 생성 종료")
 
         // 3) 이제 EXE용 outputDir만 따로 만들어서
         val outputDir = File(baseDir, "exe-output")
         if (outputDir.exists()) outputDir.deleteRecursively()
         outputDir.mkdirs()
 
+
+
+        logger.info("✅ PACKR 생성 시작")
         // 3) Packr로 EXE 생성 → 같은 outputDir에
         packWithPackr(jarFile, extractionDto.targetOs!!, outputDir)
 
         // exe-output 폴더 전체를 ZIP으로 묶어서 반환
         val zipFile = File(outputDir.parentFile, "exe-output.zip")
         zipDirectory(outputDir, zipFile)
+
+        logger.info("⚡️PACKR 생성 종료")
+
         return zipFile
     }
 

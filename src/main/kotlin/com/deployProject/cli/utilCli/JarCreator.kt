@@ -1,6 +1,5 @@
 package com.deployProject.cli.utilCli
 
-import com.deployProject.cli.utilCli.JarCreator.createJar
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -23,30 +22,33 @@ import java.util.jar.Manifest
  */
 object JarCreator {
 
-    private val os =  System.getProperty("os.name").lowercase()
+    private val os = System.getProperty("os.name").lowercase()
 
     /**
-     * 주어진 디렉터리의 .class 파일과 현재 클래스패스 의존성 JAR을 포함하여 fat-JAR 생성
+     * 주어진 디렉터리의 .class 파일과 현재 의존성 JAR들을 전부 병합하여 fat-JAR 생성
+     *
+     * @param sourceDirPath   컴파일된 .class들이 있는 디렉터리 (예: "build/classes/kotlin/main")
+     * @param jarFilePath     만들어질 fat-JAR 경로 (예: "./output/deploy-project-cli.jar")
+     * @param defaults        defaults.properties로 쓸 키-값 맵
      */
     @Throws(IOException::class)
-    fun createJar(sourceDirPath: String, jarFilePath: String, defaults: Map<String,String>) {
+    fun createJar(sourceDirPath: String, jarFilePath: String, defaults: Map<String, String>) {
         val seenEntries = mutableSetOf<String>()
         var sourceDir: Path = Paths.get(sourceDirPath)
 
+        // (1) sourceDirPath 보정 (Linux 등에서 프로젝트 루트 기준으로 찾기)
         if (!os.contains("windows") && !os.contains("mac")) {
-            // Linux인 경우, 사용자 홈 디렉터리 하위에 생성
             val wd = Paths.get("").toAbsolutePath()
             val projectRoot = wd.parent?.parent
                 ?: throw IllegalStateException("작업 디렉터리 기준으로 두 단계 상위가 존재하지 않습니다.")
             sourceDir = projectRoot.resolve(sourceDirPath)
         }
-//        if (Files.exists(srcPath)) {
-
 
         FileOutputStream(jarFilePath).use { fos ->
             JarOutputStream(fos, createManifest()).use { jos ->
-                // 클래스 파일 추가
-                if(Files.exists(sourceDir)) {
+                // ─────────────────────────────────────────────────────
+                // (2)  .class 파일 → fat-JAR에 추가
+                if (Files.exists(sourceDir)) {
                     Files.walk(sourceDir)
                         .filter { Files.isRegularFile(it) }
                         .forEach { path ->
@@ -58,32 +60,23 @@ object JarCreator {
                             }
                         }
                 } else {
-
-                    // 2) “배포 환경”이라 build/classes/kotlin/main 이 없으므로, JAR 내부를 탐색
-                    val codeSourceUri: URI =
-                        this::class.java.protectionDomain.codeSource.location.toURI()
+                    // “빌드 결과물이 없어서 sourceDir이 없을 때” → 현재 코드(예: Spring Boot JAR 내부)를 뒤져서 .class만 추가
+                    val codeSourceUri: URI = this::class.java.protectionDomain.codeSource.location.toURI()
                     val scheme = codeSourceUri.scheme
 
-                    // JAR 내부를 열기 위해 사용할 URI 결정
                     val jarFsUri: URI = when {
-                        // 2-1. codeSourceUri 가 “file:/.../myapp.jar” 형태인 경우
+                        // file:/.../something.jar 형태
                         scheme == "file" && codeSourceUri.path.endsWith(".jar") -> {
-                            URI.create("jar:${codeSourceUri}")
+                            URI.create("jar:$codeSourceUri")
                         }
-                        // 2-2. Spring Boot “nested JAR” 형태라 이미 스킴이 jar 로 나온 경우
-                        scheme == "jar" -> {
-                            codeSourceUri
-                        }
-
-                        else -> {
-                            throw IOException(
-                                "클래스 파일(.class) 디렉터리를 찾을 수 없습니다. " +
-                                        "URI 스킴: $scheme, path: ${codeSourceUri.path}"
-                            )
-                        }
+                        // 이미 jar: 스킴인 경우 (예: nested: 같은)
+                        scheme == "jar" -> codeSourceUri
+                        else -> throw IOException(
+                            "클래스 파일(.class) 디렉터리를 찾을 수 없습니다. " +
+                                    "URI 스킴: $scheme, path: ${codeSourceUri.path}"
+                        )
                     }
 
-                    // 3) jarFsUri 로 FileSystem을 열어 JAR 내부 .class 파일 순회
                     FileSystems.newFileSystem(jarFsUri, emptyMap<String, Any>()).use { fs ->
                         val jarRoot = fs.getPath("/")
                         Files.walk(jarRoot).use { stream ->
@@ -105,41 +98,100 @@ object JarCreator {
                     }
                 }
 
+                // ─────────────────────────────────────────────────────
+                // (3) 현재 환경에 맞춰 “병합 대상 JAR 목록”을 구함
 
+                // (3-1) Gradle 캐시(~/.gradle/caches/modules-2/files-2.1) 아래 모든 .jar 를 jarsInClassPath에 담기
+                val jarsInClassPath = mutableListOf<File>()
+                val userHome = System.getProperty("user.home")
+                val gradleCacheRoot = Paths.get(userHome, ".gradle", "caches", "modules-2", "files-2.1")
 
-                // 의존성 JAR 병합
-                System.getProperty("java.class.path").split(File.pathSeparatorChar)
-                    .map { File(it) }
-                    .filter { it.exists() && it.extension == "jar" }
-                    .forEach { depJar ->
-                        JarFile(depJar).use { jarFile ->
-                            jarFile.entries().asSequence()
-                                .filter { e ->
-                                    if (e.isDirectory || e.name == JarFile.MANIFEST_NAME || e.name.startsWith("META-INF/")) {
-                                        false
-                                    }    // 2) SLF4J 구버전 바인딩(StaticLoggerBinder) 무조건 제외
-                                    else if (e.name == "org/slf4j/impl/StaticLoggerBinder.class") {
-                                        false
-                                    } else {
-                                        true
+                if (Files.exists(gradleCacheRoot)) {
+                    Files.walk(gradleCacheRoot).use { stream ->
+                        stream
+                            .filter { Files.isRegularFile(it) && it.toString().endsWith(".jar") }
+                            .forEach { path ->
+                                val file = path.toFile()
+                                jarsInClassPath.add(file)
+                            }
+                    }
+                }
+
+                // (3-2) “운영 모드” (Spring Boot fat-JAR 내부 실행) 체크 → outerJarPath 추출
+                val rawUri = this::class.java.protectionDomain.codeSource.location.toURI()
+                val rawUriStr = rawUri.toString()
+
+                var outerJarPath: String? = null
+                if (rawUri.scheme == "file" && rawUri.path.endsWith(".jar")) {
+                    outerJarPath = File(rawUri).absolutePath
+                } else if (rawUriStr.startsWith("jar:nested:")) {
+                    val nestedPart = rawUriStr.removePrefix("jar:nested:")
+                    val candidate = nestedPart.substringBefore("!/")
+                    outerJarPath = File(candidate).absolutePath
+                }
+
+                if (outerJarPath != null) {
+                    try {
+                        JarFile(outerJarPath).use { outerJar ->
+                            outerJar.entries().asSequence()
+                                .filter { entry ->
+                                    val name = entry.name
+                                    name.startsWith("BOOT-INF/lib/") && name.endsWith(".jar")
+                                }
+                                .forEach { nestedEntry ->
+                                    val nestedName = nestedEntry.name
+
+                                    val tempJar = Files.createTempFile("nested-", ".jar").toFile().apply {
+                                        deleteOnExit()
+                                    }
+
+                                    outerJar.getInputStream(nestedEntry).use { input ->
+                                        FileOutputStream(tempJar).use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+
+                                    if (!jarsInClassPath.any { it.absolutePath == tempJar.absolutePath }) {
+                                        jarsInClassPath.add(tempJar)
                                     }
                                 }
-                                .forEach { e ->
-                                    if (seenEntries.add(e.name)) {
-                                        jos.putNextEntry(JarEntry(e.name).apply { time = e.time })
-                                        jarFile.getInputStream(e).use { it.copyTo(jos) }
+                        }
+                    } catch (e: Exception) {
+                    }
+                }
+
+                // (4) jarsInClassPath 에 담긴 모든 JAR을 순회하면서 실제 병합
+                jarsInClassPath.forEach { depJar ->
+                    try {
+                        JarFile(depJar).use { jarFile ->
+                            jarFile.entries().asSequence()
+                                .filter { entry ->
+                                    val name = entry.name
+                                    when {
+                                        entry.isDirectory -> false
+                                        name == JarFile.MANIFEST_NAME -> false
+                                        name.startsWith("META-INF/") -> false
+                                        name == "org/slf4j/impl/StaticLoggerBinder.class" -> false
+                                        else -> true
+                                    }
+                                }
+                                .forEach { entry ->
+                                    if (seenEntries.add(entry.name)) {
+                                        jos.putNextEntry(JarEntry(entry.name).apply { time = entry.time })
+                                        jarFile.getInputStream(entry).use { it.copyTo(jos) }
                                         jos.closeEntry()
                                     }
                                 }
                         }
+                    } catch (e: Exception) {
                     }
-
-                // GitInfoCli 호출시 매개변수를 properties에 바인딩
-                val props = Properties().apply {
-                    defaults.forEach { (k, v) -> setProperty(k,v) }
-
                 }
 
+                // ─────────────────────────────────────────────────────
+                // (5) defaults.properties 파일 추가 (기존과 동일)
+                val props = Properties().apply {
+                    defaults.forEach { (k, v) -> setProperty(k, v) }
+                }
                 jos.putNextEntry(JarEntry("defaults.properties"))
                 props.store(jos, "GitInfoCli defaults")
                 jos.closeEntry()
@@ -153,41 +205,44 @@ object JarCreator {
     private fun createManifest(): Manifest = Manifest().apply {
         mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
         mainAttributes[Attributes.Name("Main-Class")] = "com.deployProject.cli.ExtractionLauncher"
+        // ※ Fat-JAR 안에 kotlin-stdlib 등을 이미 병합했으므로 Class-Path 설정은 불필요
     }
 
-
-    /**
-     * 기존 main은 args 파싱 후 run() 호출
-     */
     /**
      * CLI 진입점: 화면이나 테스트에서 받은 값으로 JAR을 생성하고 defaults.properties에 바인딩
-     * 0: gitDir (필수)
-     * 1: relPath (옵션)
-     * 2: sinceDate (옵션, yyyy/MM/dd)
-     * 3: untilDate (옵션, yyyy/MM/dd)
-     * 4: fileStatusType (옵션)
-     * 5: jarFilePath (옵션, 출력 JAR 경로)
+     *
+     * @param args
+     *  0: gitDir (필수)
+     *  1: relPath (옵션)
+     *  2: sinceDate (옵션, yyyy/MM/dd)
+     *  3: untilDate (옵션, yyyy/MM/dd)
+     *  4: fileStatusType (옵션)
+     *  5: jarOutputDir (필수, 출력 JAR을 담을 디렉터리)
+     *  6: deployServerDir (옵션)
      */
     @JvmStatic
     fun main(args: Array<String>) {
-        /// 파일 생성
-        val randomFileName = args[5]
-        val path = Paths.get(randomFileName)
-        Files.createDirectories(path)
+        if (args.size < 6) {
+            error("Usage: <repoDir> [relPath] [sinceDate] [untilDate] [fileStatusType] <jarOutputDir> [deployServerDir]")
+        }
 
-        // 1) 필수 및 옵션 파라미터 파싱
+        // 1) jarOutputDir 디렉터리 생성
+        val jarOutputDir = args[5]
+        val outputPath = Paths.get(jarOutputDir)
+        Files.createDirectories(outputPath)
+
+        // 2) 파라미터 파싱
         val repoDir = args.getOrNull(0)?.takeIf { it.isNotBlank() }
-            ?: error("Usage: <repoDir> [relPath] [sinceDate] [untilDate] [fileStatusType] [jarFilePath]")
+            ?: error("Usage: <repoDir> [relPath] [sinceDate] [untilDate] [fileStatusType] <jarOutputDir> [deployServerDir]")
         val relPath = args.getOrNull(1) ?: ""
         val sinceDate = args.getOrNull(2)?.takeIf { it.isNotBlank() }
-            ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd")).toString()
+            ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"))
         val untilDate = args.getOrNull(3)?.takeIf { it.isNotBlank() }
-            ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd")).toString()
+            ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"))
         val statusType = args.getOrNull(4)?.takeIf { it.isNotBlank() } ?: "ALL"
-        val jarFilePath = "${randomFileName}/deploy-project-cli.jar"
         val deployServerDir = args.getOrNull(6)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/"
 
-        // 2) defaults 맵 구성
+        // 3) defaults 맵 구성
         val defaults = mapOf(
             "repoDir" to repoDir,
             "relPath" to relPath,
@@ -197,24 +252,19 @@ object JarCreator {
             "deployServerDir" to deployServerDir
         )
 
-
-        val sourceDirPath = if (os.contains("windows") || os.contains("mac"))
+        // 4) sourceDirPath 결정
+        val sourceDirPath = if (os.contains("windows") || os.contains("mac")) {
             "./build/classes/kotlin/main"
-        else
-           "build/classes/kotlin/main"
+        } else {
+            "build/classes/kotlin/main"
+        }
 
-        // 3) JAR 생성
-        createJar(
-            sourceDirPath = sourceDirPath,
-            jarFilePath   = jarFilePath,
-            defaults      = defaults
-        )
+        // 5) 최종 생성될 JAR 경로: <jarOutputDir>/deploy-project-cli.jar
+        val jarFilePath = "$jarOutputDir/deploy-project-cli.jar"
+
+        // 6) JAR 생성
+        createJar(sourceDirPath, jarFilePath, defaults)
 
         println("✅ JAR 생성 완료: $jarFilePath")
     }
-
-
-
-
-
 }

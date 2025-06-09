@@ -14,7 +14,6 @@ import java.util.Date
 import java.util.Properties
 
 object ExtractionLauncher {
-    private val log = LoggerFactory.getLogger(ExtractionLauncher::class.java)
     private val DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     @JvmStatic

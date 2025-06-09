@@ -57,10 +57,12 @@ const PathConverter: React.FC<Props> = ({site}) => {
             return;
         }
 
+        console.log("다운로드 시작 : " , new Date())
+
         // 로딩 시작
         Swal.fire({
-            title: '다운로드 중입니다...',
-            text: '잠시만 기다려 주세요.',
+            title: '다운로드 중입니da...',
+            text: '잠시만 기다려 주세yo.',
             allowOutsideClick: false,
             didOpen: () => {
                 Swal.showLoading();
@@ -75,7 +77,7 @@ const PathConverter: React.FC<Props> = ({site}) => {
                 homePath: site.homePath,
                     fileStatusType: fileStatusType,
                 targetOs: targetOs,
-            }, {responseType: 'blob',}
+            }, {responseType: 'blob', timeout:600000 } // 60초 타임아웃
         ).then(res => {
             const date = new Date().toISOString().replace(/[:.]/g, '-');
             const disposition = res.headers['content-disposition'];
@@ -95,6 +97,10 @@ const PathConverter: React.FC<Props> = ({site}) => {
             URL.revokeObjectURL(url);
             a.remove();
 
+
+
+            console.log("다운로드 종료 : " , new Date())
+
             // 성공 알림
             Swal.fire({
                 icon: 'success',
@@ -105,7 +111,18 @@ const PathConverter: React.FC<Props> = ({site}) => {
             });
         })
             .catch((err) => {
-                console.error('추출 실패:', err);
+                    console.error('err.response.status =', err.response?.status);      // 503
+                if (err.response?.data) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        console.log('서버 에러 바디(raw JSON) =', reader.result);
+                        // reader.result에는 예를 들어 { "timestamp": "...", "status": 503, "error": "Service Unavailable", "message": "...", "path": "/api/git/extraction" } 같은 JSON이 들어있을 수 있습니다.
+                    };
+                    reader.readAsText(err.response.data);
+                }
+                    console.error('err.response.headers= ', err.response?.headers);
+                    console.error('err.message        =', err.message);                // ex) "Request failed with status code 503"
+                    console.error('err.config.timeout =', err.config?.timeout);       // 600000
                 Swal.fire({
                     icon: 'error',
                     title: '다운로드 실패',

@@ -1,18 +1,23 @@
 name: deployProject
 
 server:
+  tomcat:
+    connection-timeout: 600000   # 10분
   port: 9090
 
 spring:
+  mvc:
+    async:
+      request-timeout: 120000
   datasource:
     driver-class-name: com.mysql.jdbc.Driver
     url: jdbc:mysql://backjin.iptime.org:3306/deployDB
     username: deployMan
     password: deploy123
   jpa:
-      show-sql: true
-      hibernate:
-          ddl-auto: update
+    show-sql: true
+    hibernate:
+      ddl-auto: update
   jooq:
     sql-dialect: MYSQL
 
