@@ -2,6 +2,7 @@ package com.deployProject.cli.infoCli
 
 import com.deployProject.cli.DeployCliScript
 import com.deployProject.cli.utilCli.GitUtil
+import com.deployProject.cli.utilCli.GitUtil.addZipEntryName
 import com.deployProject.cli.utilCli.GitUtil.allowsDiff
 import com.deployProject.cli.utilCli.GitUtil.allowsStatus
 import com.deployProject.deploy.domain.site.FileStatusType
@@ -42,9 +43,7 @@ class SvnInfoCli {
         val diffEntries = GitUtil.mapSourcesToClasses(diffPaths)
 
         // webapp-relative 경로 변환
-        val webapp = File(workTree, "src/main/webapp")
-        val entries =
-            (statusEntries + diffEntries).distinct().map { File(it).relativeTo(webapp).path.replace('\\', '/') }
+        val entries = addZipEntryName(workTree,statusEntries + diffEntries).toList()
 
         // ZIP 생성
         GitUtil.createZip { zip ->

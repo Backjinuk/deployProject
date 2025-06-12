@@ -9,12 +9,6 @@ interface Props {
 
 const SiteSelector: React.FC<Props> = ({ sites, selectedId, onSelect }) => {
 
-    useEffect(() => {
-        sites.forEach(site => {
-            console.log(`Site ID: ${site.id}, Text: ${site.text}`);
-        })
-    });
-
     return (
 
 

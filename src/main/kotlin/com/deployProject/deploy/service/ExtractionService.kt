@@ -23,10 +23,8 @@ class ExtractionService(
     private val logger = LoggerFactory.getLogger(ExtractionService::class.java)
 
     fun extractGitInfo(extractionDto: ExtractionDto): File {
+
         // 1) baseDir/exe-output만 쓰도록 변경
-
-        println("System.getProperty(\"java.class.path\") = ${System.getProperty("java.class.path")}")
-
         var baseDir: File = File("GitInfoJarFile", UUID.randomUUID().toString())
 
         if (!os.contains("windows") && !os.contains("mac")) {

@@ -1,6 +1,7 @@
 package com.deployProject.cli.utilCli
 
 import com.deployProject.deploy.domain.site.FileStatusType
+import org.springframework.data.util.StreamUtils.zip
 import java.awt.BorderLayout
 import java.io.File
 import java.io.FileInputStream
@@ -30,6 +31,7 @@ object GitUtil {
     // 소스 파일명과 최신 클래스 파일 경로 맵
     private var statusClassMap: Map<String, String> = mapOf()
     private var diffClassMap:   Map<String, String> = mapOf()
+    private val zippedEntriesPath =  mutableSetOf<String>()
 
     /**
      * FileStatusType이 DIFF 또는 ALL을 허용하는지 확인
@@ -172,6 +174,26 @@ object GitUtil {
     }
 
     /**
+     * 지정된 경로 리스트를 baseDir 기준으로 ZIP에 추가
+     */
+    fun addZipEntryName(baseDir: File, paths: List<String>) : Set<String> {
+        val basePath = baseDir.toPath()
+        paths.forEach { rel ->
+            val file = if (Paths.get(rel).isAbsolute) File(rel) else File(baseDir, rel)
+            if (file.exists()) {
+                if (file.isDirectory) {
+                    Files.walk(file.toPath()).filter(Files::isRegularFile)
+                        .forEach { addZipFileName(basePath, it.toFile()) }
+                } else {
+                    addZipFileName(basePath, file)
+                }
+            }
+        }
+
+        return zippedEntriesPath;
+    }
+
+    /**
      * 단일 파일을 ZIP에 추가 (중복 방지)
      */
     private fun addZipFile(zip: ZipOutputStream, basePath: Path, file: File) {
@@ -181,6 +203,14 @@ object GitUtil {
             FileInputStream(file).use { it.copyTo(zip) }
             zip.closeEntry()
         }
+    }
+
+    /**
+     * 단일 파일을 ZIP에 추가 (중복 방지)
+     */
+    private fun addZipFileName(basePath: Path, file: File) {
+        val entryName = basePath.relativize(file.toPath()).toString().replace(File.separatorChar, '/')
+        zippedEntriesPath.add(entryName)
     }
 
     // ───────────────────────────────────────────────────────────
