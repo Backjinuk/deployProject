@@ -96,7 +96,9 @@ object JarCreator {
                                 }
                         }
                     }
-                }
+
+                    jos.setLevel(java.util.zip.Deflater.BEST_SPEED)
+               }
 
                 // ─────────────────────────────────────────────────────
                 // (3) 현재 환경에 맞춰 “병합 대상 JAR 목록”을 구함
@@ -106,6 +108,7 @@ object JarCreator {
                 val userHome = System.getProperty("user.home")
                 val gradleCacheRoot = Paths.get(userHome, ".gradle", "caches", "modules-2", "files-2.1")
 
+/*
                 if (Files.exists(gradleCacheRoot)) {
                     Files.walk(gradleCacheRoot).use { stream ->
                         stream
@@ -116,6 +119,9 @@ object JarCreator {
                             }
                     }
                 }
+*/
+
+                jarsInClassPath += jarsFromJavaClassPath()
 
                 // (3-2) “운영 모드” (Spring Boot fat-JAR 내부 실행) 체크 → outerJarPath 추출
                 val rawUri = this::class.java.protectionDomain.codeSource.location.toURI()
@@ -208,6 +214,14 @@ object JarCreator {
         // ※ Fat-JAR 안에 kotlin-stdlib 등을 이미 병합했으므로 Class-Path 설정은 불필요
     }
 
+    // JarCreator 안에 유틸 추가
+    private fun jarsFromJavaClassPath(): List<File> {
+        val cp = System.getProperty("java.class.path") ?: return emptyList()
+        return cp.split(File.pathSeparatorChar)
+            .map(::File)
+            .filter { it.isFile && it.extension.equals("jar", true) }
+    }
+
     /**
      * CLI 진입점: 화면이나 테스트에서 받은 값으로 JAR을 생성하고 defaults.properties에 바인딩
      *
@@ -265,6 +279,5 @@ object JarCreator {
         // 6) JAR 생성
         createJar(sourceDirPath, jarFilePath, defaults)
 
-        println("✅ JAR 생성 완료: $jarFilePath")
     }
 }

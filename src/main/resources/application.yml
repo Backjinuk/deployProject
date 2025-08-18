@@ -11,9 +11,13 @@ spring:
       request-timeout: 120000
   datasource:
     driver-class-name: com.mysql.jdbc.Driver
+
     url: jdbc:mysql://backjin.iptime.org:3306/deployDB
     username: deployMan
     password: deploy123
+
+
+
   jpa:
     show-sql: true
     hibernate:
@@ -21,3 +25,6 @@ spring:
   jooq:
     sql-dialect: MYSQL
 
+fgivpnT5008:
+  iptime:
+    org:
