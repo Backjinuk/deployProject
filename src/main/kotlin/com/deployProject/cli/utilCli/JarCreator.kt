@@ -108,7 +108,6 @@ object JarCreator {
                 val userHome = System.getProperty("user.home")
                 val gradleCacheRoot = Paths.get(userHome, ".gradle", "caches", "modules-2", "files-2.1")
 
-/*
                 if (Files.exists(gradleCacheRoot)) {
                     Files.walk(gradleCacheRoot).use { stream ->
                         stream
@@ -119,7 +118,6 @@ object JarCreator {
                             }
                     }
                 }
-*/
 
                 jarsInClassPath += jarsFromJavaClassPath()
 
@@ -255,6 +253,8 @@ object JarCreator {
             ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"))
         val statusType = args.getOrNull(4)?.takeIf { it.isNotBlank() } ?: "ALL"
         val deployServerDir = args.getOrNull(6)?.takeIf { it.isNotBlank() } ?: "/home/bjw/deployProject/"
+        val sinceVersion = args.getOrNull(7)?.takeIf { it.isNotBlank() } ?: ""
+        val untilVersion = args.getOrNull(8)?.takeIf { it.isNotBlank() } ?: ""
 
         // 3) defaults 맵 구성
         val defaults = mapOf(
@@ -263,7 +263,10 @@ object JarCreator {
             "since" to sinceDate,
             "until" to untilDate,
             "statusType" to statusType,
-            "deployServerDir" to deployServerDir
+            "deployServerDir" to deployServerDir,
+            // 수정 이유: 날짜 + 저장소 버전 필터를 런처에서 재구성하기 위해 기본 속성에 함께 기록한다.
+            "sinceVersion" to sinceVersion,
+            "untilVersion" to untilVersion
         )
 
         // 4) sourceDirPath 결정

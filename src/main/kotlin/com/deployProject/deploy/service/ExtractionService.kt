@@ -91,16 +91,19 @@ class ExtractionService(
         // (3) Fat-JAR 생성 (가장 시간이 걸릴 수 있으므로 측정 로깅)
         val tJar = measureTimeMillis {
             logger.info("deploy-cli.jar 생성")
+            // 수정 이유: 날짜 + 저장소 버전 조건을 CLI로 전달하고, nullable 인자 캐스팅 예외를 방지한다.
             jarCreator.main(
-                arrayOf(
-                    extractionDto.localPath,      // 0: repoDir
-                    "",                            // 1: relPath
-                    extractionDto.since,          // 2: sinceDate
-                    extractionDto.until,          // 3: untilDate
-                    extractionDto.fileStatusType, // 4: fileStatusType
-                    baseDir.absolutePath,         // 5: jarOutputDir (JAR이 여기에 생성됨)
-                    extractionDto.homePath        // 6: deployServerDir (옵션)
-                ) as Array<String>
+                listOf(
+                    extractionDto.localPath ?: "",      // 0: repoDir
+                    "",                                 // 1: relPath
+                    extractionDto.since ?: "",          // 2: sinceDate
+                    extractionDto.until ?: "",          // 3: untilDate
+                    extractionDto.fileStatusType ?: "", // 4: fileStatusType
+                    baseDir.absolutePath,               // 5: jarOutputDir
+                    extractionDto.homePath ?: "",       // 6: deployServerDir
+                    extractionDto.sinceVersion ?: "",   // 7: sinceVersion
+                    extractionDto.untilVersion ?: ""    // 8: untilVersion
+                ).toTypedArray()
             )
         }
         logger.info("deploy-cli.jar 종료 ({} ms), path={}", tJar, jarFile.absolutePath)

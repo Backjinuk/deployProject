@@ -62,7 +62,7 @@ class DeployCliScript {
                     "js/" + p.replaceFirst(Regex("^target/[^/]+/js/"), "")
                 else -> p
             }
-        }
+        }.toSet() // 중복 제거
 
         val scriptLines = mutableListOf<String>().apply {
             add("#!/usr/bin/env bash")

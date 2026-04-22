@@ -1,58 +1,68 @@
-import { CSSProperties } from 'react';
-import { theme } from './theme';
+import { CSSProperties } from "react";
+import { theme } from "./theme";
 
-export const styles : Record<string, CSSProperties> = {
-    // 카드 컨테이너
+export const styles: Record<string, CSSProperties> = {
     customCard: {
-        maxWidth:    '800px',
-        margin:      '0 auto 1.5rem',
-        padding:     '1.5rem',
-        borderRadius: theme.borderRadius,
-        border:      `1px solid ${theme.border}`,
-        background:  theme.bgSurface,
-        boxShadow:   theme.shadow,
+        padding: "1.15rem",
     },
-
-    // 날짜+토글 래퍼
     controlsRow: {
-        display:      'flex',
-        alignItems:   'center',
-        flexWrap:     'wrap',
-        gap:          '1rem',
-        marginBottom: '2rem',  // 여백 살짝 더
+        display: "flex",
+        alignItems: "center",
+        gap: "0.9rem",
+        flexWrap: "wrap",
+        marginBottom: "1.15rem",
     },
     separator: {
-        fontSize: '1.25rem',
-        color:    theme.fgDefault,
+        color: theme.fgMuted,
+        fontWeight: 700,
     },
     toggles: {
-        marginLeft: 'auto',
-        display:    'flex',
-        alignItems: 'center',
-        gap:        '1rem',
+        marginLeft: "auto",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.8rem",
     },
-
-    // Date Input 스타일 (파란색 Outline)
+    versionRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "0.7rem",
+        marginBottom: "1.1rem",
+        flexWrap: "wrap",
+    },
+    versionLabel: {
+        minWidth: "88px",
+        color: theme.fgStrong,
+        fontWeight: 700,
+        fontSize: "0.92rem",
+    },
+    versionInput: {
+        flex: 1,
+        minWidth: "240px",
+        borderRadius: "10px",
+        border: `1px solid ${theme.borderStrong}`,
+        background: theme.bgElevated,
+        color: theme.fgStrong,
+    },
     dateInput: {
-        padding:      '0.6rem 1rem',
-        fontSize:     '1rem',
-        color:        theme.primary,
-        background:   'transparent',
-        border:       `1px solid ${theme.primary}`,
-        borderRadius: theme.borderRadius,
-        outline:      'none',
+        padding: "0.65rem 0.8rem",
+        borderRadius: "10px",
+        border: `1px solid ${theme.borderStrong}`,
+        background: theme.bgElevated,
+        color: theme.fgStrong,
+        minWidth: "128px",
+        outline: "none",
     },
-
-    // 추출하기 버튼 (Primary)
     extractBtn: {
-        width:        '100%',
-        background:   theme.primary,
-        color:        '#fff',
-        padding:      '0.75rem',
-        fontSize:     '1rem',
-        border:       'none',
-        borderRadius: theme.borderRadius,
-        boxShadow:    '0 2px 6px rgba(0,0,0,0.1)',
-        transition:   'background-color 0.2s, transform 0.1s, box-shadow 0.2s',
+        width: "100%",
+        background: `linear-gradient(135deg, ${theme.brandDeep} 0%, ${theme.brand} 100%)`,
+        color: "#fff",
+        padding: "0.72rem",
+        border: "none",
+        borderRadius: "12px",
+        fontWeight: 700,
+        letterSpacing: "0.01em",
+        boxShadow: "0 8px 20px rgba(23, 82, 160, 0.22)",
+        transition: "transform 0.15s ease, box-shadow 0.2s ease",
+        cursor: "pointer",
     },
 };

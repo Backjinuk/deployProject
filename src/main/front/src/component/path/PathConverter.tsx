@@ -1,95 +1,124 @@
-import React, {useState, forwardRef} from 'react';
-import axios from 'axios';
-import DatePicker from 'react-datepicker';
-import {ko} from 'date-fns/locale';
-import 'react-datepicker/dist/react-datepicker.css';
-
-import {Site} from '../../api/sites';
-import {styles} from '../../styles/PathConverterStyles';
+import React, { forwardRef, useState } from "react";
+import axios from "axios";
+import DatePicker from "react-datepicker";
+import { ko } from "date-fns/locale";
+import "react-datepicker/dist/react-datepicker.css";
 import Swal from "sweetalert2";
+
+import { Site } from "../../api/sites";
+import { styles } from "../../styles/PathConverterStyles";
 
 interface Props {
     site: Site;
 }
 
-// custom input
-const CustomInput = forwardRef<HTMLInputElement, {
-    value?: string;
-    onClick?: () => void;
-}>(({value, onClick}, ref) => (
-    <input
-        ref={ref}
-        value={value}
-        onClick={onClick}
-        readOnly
-        style={styles.dateInput}    // 파란색 Outline
-    />
-));
+const CustomInput = forwardRef<HTMLInputElement, { value?: string; onClick?: () => void }>(
+    ({ value, onClick }, ref) => (
+        <input ref={ref} value={value} onClick={onClick} readOnly style={styles.dateInput} />
+    )
+);
 
-const PathConverter: React.FC<Props> = ({site}) => {
+const PathConverter: React.FC<Props> = ({ site }) => {
     const [startDate, setStartDate] = useState<Date | null>(new Date());
     const [endDate, setEndDate] = useState<Date | null>(new Date());
+    const [sinceVersion, setSinceVersion] = useState("");
+    const [untilVersion, setUntilVersion] = useState("");
     const [gitEnabled, setGitEnabled] = useState(true);
     const [statusEnabled, setStatusEnabled] = useState(true);
+    const [isExtracting, setIsExtracting] = useState(false);
 
-    const extraction = () => {
-        let fileStatusType;
+    const resolveFileStatusType = (): "ALL" | "DIFF" | "STATUS" | null => {
+        if (gitEnabled && statusEnabled) return "ALL";
+        if (gitEnabled) return "DIFF";
+        if (statusEnabled) return "STATUS";
+        return null;
+    };
 
-        if (gitEnabled && statusEnabled) {
-            fileStatusType = 'ALL'
-        } else if (gitEnabled) {
-            fileStatusType = 'GIT'
-        } else if (statusEnabled) {
-            fileStatusType = 'STATUS'
-        }
-
+    const resolveTargetOs = (): "WINDOWS" | "MAC" | "LINUX" | null => {
         const ua = navigator.userAgent.toLowerCase();
-        let targetOs;
+        if (ua.includes("windows")) return "WINDOWS";
+        if (ua.includes("mac")) return "MAC";
+        if (ua.includes("linux")) return "LINUX";
+        return null;
+    };
 
-        if (ua.indexOf('windows') > -1) {
-            targetOs = 'WINDOWS';
-        } else if (ua.indexOf('mac') > -1) {
-            targetOs = 'MAC';
-        } else if (ua.indexOf('linux') > -1) {
-            targetOs = 'LINUX';
-        } else {
-            console.error('지원하지 않는 OS입니다.');
+    const validateVersionInputs = async (): Promise<boolean> => {
+        const hasSinceVersion = sinceVersion.trim().length > 0;
+        const hasUntilVersion = untilVersion.trim().length > 0;
+
+        // 수정 이유: 버전 범위는 시작/종료를 같이 받아야 의도한 구간 필터가 안정적으로 동작한다.
+        if (hasSinceVersion !== hasUntilVersion) {
+            await Swal.fire({
+                icon: "warning",
+                title: "버전 범위 확인",
+                text: "시작 버전과 종료 버전을 모두 입력해 주세요.",
+            });
+            return false;
+        }
+        return true;
+    };
+
+    const extraction = async () => {
+        const fileStatusType = resolveFileStatusType();
+        if (!fileStatusType) {
+            await Swal.fire({
+                icon: "warning",
+                title: "옵션 확인",
+                text: "Git 또는 Status 중 하나 이상을 선택하세요.",
+            });
             return;
         }
 
-        console.log("다운로드 시작 : " , new Date())
+        if (!(await validateVersionInputs())) {
+            return;
+        }
 
-        // 로딩 시작
+        const targetOs = resolveTargetOs();
+        if (!targetOs) {
+            await Swal.fire({
+                icon: "error",
+                title: "지원되지 않는 OS",
+                text: "운영체제를 감지할 수 없습니다.",
+            });
+            return;
+        }
+
+        setIsExtracting(true);
         Swal.fire({
-            title: '다운로드 중입니da...',
-            text: '잠시만 기다려 주세yo.',
+            title: "패키지 생성 중",
+            text: "날짜 + 저장소 버전 조건으로 처리하고 있습니다.",
             allowOutsideClick: false,
-            didOpen: () => {
-                Swal.showLoading();
-            },
+            didOpen: () => Swal.showLoading(),
         });
 
-        axios.post('/api/git/extraction', {
-                siteId: site.id,
-                since: startDate?.toISOString(),
-                until: endDate?.toISOString(),
-                localPath: site.localPath,
-                homePath: site.homePath,
-                    fileStatusType: fileStatusType,
-                targetOs: targetOs,
-            }, {responseType: 'blob', timeout:600000 } // 60초 타임아웃
-        ).then(res => {
-            const date = new Date().toISOString().replace(/[:.]/g, '-');
-            const disposition = res.headers['content-disposition'];
-            let filename = `deployCli-${date}.zip`;
+        try {
+            const response = await axios.post(
+                "/api/git/extraction",
+                {
+                    siteId: site.id,
+                    since: startDate?.toISOString(),
+                    until: endDate?.toISOString(),
+                    sinceVersion: sinceVersion.trim() || null,
+                    untilVersion: untilVersion.trim() || null,
+                    localPath: site.localPath,
+                    homePath: site.homePath,
+                    fileStatusType,
+                    targetOs,
+                },
+                { responseType: "blob", timeout: 600000 }
+            );
+
+            const now = new Date().toISOString().replace(/[:.]/g, "-");
+            const disposition = response.headers["content-disposition"];
+            let filename = `deploy-bundle-${now}.zip`;
             if (disposition) {
                 const match = disposition.match(/filename="(.+)"/);
-                if (match && match[1]) filename = match[1];
+                if (match?.[1]) filename = match[1];
             }
 
-            const blob = new Blob([res.data], {type: res.headers['content-type']});
+            const blob = new Blob([response.data], { type: response.headers["content-type"] });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
+            const a = document.createElement("a");
             a.href = url;
             a.download = filename;
             document.body.appendChild(a);
@@ -97,38 +126,23 @@ const PathConverter: React.FC<Props> = ({site}) => {
             URL.revokeObjectURL(url);
             a.remove();
 
-
-
-            console.log("다운로드 종료 : " , new Date())
-
-            // 성공 알림
-            Swal.fire({
-                icon: 'success',
-                title: '다운로드 완료!',
+            await Swal.fire({
+                icon: "success",
+                title: "다운로드 완료",
                 text: filename,
-                timer: 2000,
+                timer: 1800,
                 showConfirmButton: false,
             });
-        })
-            .catch((err) => {
-                    console.error('err.response.status =', err.response?.status);      // 503
-                if (err.response?.data) {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        console.log('서버 에러 바디(raw JSON) =', reader.result);
-                        // reader.result에는 예를 들어 { "timestamp": "...", "status": 503, "error": "Service Unavailable", "message": "...", "path": "/api/git/extraction" } 같은 JSON이 들어있을 수 있습니다.
-                    };
-                    reader.readAsText(err.response.data);
-                }
-                    console.error('err.response.headers= ', err.response?.headers);
-                    console.error('err.message        =', err.message);                // ex) "Request failed with status code 503"
-                    console.error('err.config.timeout =', err.config?.timeout);       // 600000
-                Swal.fire({
-                    icon: 'error',
-                    title: '다운로드 실패',
-                    text: '문제가 발생했습니다.',
-                });
+        } catch (err) {
+            console.error("extraction error:", err);
+            await Swal.fire({
+                icon: "error",
+                title: "다운로드 실패",
+                text: "서버 응답을 확인해 주세요.",
             });
+        } finally {
+            setIsExtracting(false);
+        }
     };
 
     return (
@@ -139,18 +153,16 @@ const PathConverter: React.FC<Props> = ({site}) => {
                     selected={startDate}
                     onChange={setStartDate}
                     dateFormat="yyyy-MM-dd"
-                    customInput={<CustomInput/>}
+                    customInput={<CustomInput />}
                     calendarClassName="custom-calendar"
                 />
-
                 <span style={styles.separator}>~</span>
-
                 <DatePicker
                     locale={ko}
                     selected={endDate}
                     onChange={setEndDate}
                     dateFormat="yyyy-MM-dd"
-                    customInput={<CustomInput/>}
+                    customInput={<CustomInput />}
                     calendarClassName="custom-calendar"
                 />
 
@@ -161,7 +173,7 @@ const PathConverter: React.FC<Props> = ({site}) => {
                             type="checkbox"
                             id="toggleGit"
                             checked={gitEnabled}
-                            onChange={() => setGitEnabled(v => !v)}
+                            onChange={() => setGitEnabled((v) => !v)}
                         />
                         <label className="form-check-label" htmlFor="toggleGit">
                             Git
@@ -173,7 +185,7 @@ const PathConverter: React.FC<Props> = ({site}) => {
                             type="checkbox"
                             id="toggleStatus"
                             checked={statusEnabled}
-                            onChange={() => setStatusEnabled(v => !v)}
+                            onChange={() => setStatusEnabled((v) => !v)}
                         />
                         <label className="form-check-label" htmlFor="toggleStatus">
                             Status
@@ -182,11 +194,27 @@ const PathConverter: React.FC<Props> = ({site}) => {
                 </div>
             </div>
 
-            <button
-                onClick={extraction}
-                style={styles.extractBtn}
-            >
-                추출하기
+            <div style={styles.versionRow}>
+                <label style={styles.versionLabel}>저장소 버전</label>
+                <input
+                    className="form-control"
+                    style={styles.versionInput}
+                    placeholder="시작 버전 (예: a1b2c3d / 1200)"
+                    value={sinceVersion}
+                    onChange={(e) => setSinceVersion(e.target.value)}
+                />
+                <span style={styles.separator}>~</span>
+                <input
+                    className="form-control"
+                    style={styles.versionInput}
+                    placeholder="종료 버전 (예: f6e5d4c / 1250)"
+                    value={untilVersion}
+                    onChange={(e) => setUntilVersion(e.target.value)}
+                />
+            </div>
+
+            <button onClick={extraction} style={styles.extractBtn} disabled={isExtracting}>
+                {isExtracting ? "생성 중..." : "패키지 추출"}
             </button>
         </div>
     );

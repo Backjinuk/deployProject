@@ -26,7 +26,7 @@ class DeployRepositoryImpl(
             "SELECT s " +
                     "FROM Site s " +
                     "where s.userSeq = :id " +
-                    "and (useYn != 'N' or useYn IS NULL)",
+                    "and (s.useYn != 'N' or s.useYn IS NULL)",
             Site::class.java
         )
 
@@ -76,6 +76,8 @@ class DeployRepositoryImpl(
     @Transactional
     override fun updatePath(site: Site) {
         logger.info("updatePath started")
+        // 수정 이유: id 없이 update를 수행하면 WHERE 파라미터 누락으로 실패한다.
+        val siteId = requireNotNull(site.id) { "site.id is required for updatePath()" }
 
         val assignments = mutableListOf<String>().apply {
             site.text?.let { add("s.text      = :text") }
@@ -96,7 +98,7 @@ class DeployRepositoryImpl(
 
         // 4) Query 생성 및 파라미터 바인딩
         val query = entityManager.createQuery(jpql)
-        site.id?.let { query.setParameter("id", it) }
+        query.setParameter("id", siteId)
         site.text?.let { query.setParameter("text", it) }
         site.homePath?.let { query.setParameter("homePath", it) }
         site.localPath?.let { query.setParameter("localPath", it) }

@@ -26,7 +26,13 @@ class SvnInfoCli {
     private val log = LoggerFactory.getLogger(SvnInfoCli::class.java)
 
     fun svnCliExecution(
-        repoPath: String, since: Date, until: Date, fileStatusType: FileStatusType, deployServerDir: String
+        repoPath: String,
+        since: Date,
+        until: Date,
+        fileStatusType: FileStatusType,
+        deployServerDir: String,
+        sinceVersion: String?,
+        untilVersion: String?
     ) {
         GitUtil.showProgressAndRun(title = "SVN 작업중...", initialMessage = "SVN 추출를 시작합니다…") {
         val svnDir = GitUtil.parseDir(repoPath, "svn")
@@ -35,7 +41,7 @@ class SvnInfoCli {
 
         // 수집된 경로
         val statusPaths = collectStatusPaths(svnDir.path, since, until)
-        val diffPaths = collectDiffPaths(svnDir.path, since, until)
+        val diffPaths = collectDiffPaths(svnDir.path, since, until, sinceVersion, untilVersion)
 
         // 클래스 매핑
         GitUtil.buildLatestClassMap(workTree, statusPaths + diffPaths)
@@ -97,13 +103,22 @@ class SvnInfoCli {
         return files
     }
 
-    private fun collectDiffPaths(root: String, start: Date, end: Date): List<String> {
+    private fun collectDiffPaths(
+        root: String,
+        start: Date,
+        end: Date,
+        sinceVersion: String?,
+        untilVersion: String?
+    ): List<String> {
         val client = createClientManagerWithCachedAuth()
         val paths = mutableListOf<String>()
+        val startRevision = parseSvnRevisionOrDate(sinceVersion, start)
+        val endRevision = parseSvnRevisionOrDate(untilVersion, end)
 
         try{
+            // 수정 이유: 날짜 + 저장소 revision 범위를 동시에 지원한다.
             client.logClient.doLog(
-                arrayOf(File(root)), SVNRevision.create(start), SVNRevision.create(end), false, true, 0L
+                arrayOf(File(root)), startRevision, endRevision, false, true, 0L
             ) { logEntry ->
                 logEntry.changedPaths.values.forEach { change ->
                     paths.add(change.path)
@@ -114,6 +129,11 @@ class SvnInfoCli {
         }
 
         return paths
+    }
+
+    private fun parseSvnRevisionOrDate(version: String?, date: Date): SVNRevision {
+        val revision = version?.trim()?.toLongOrNull()
+        return if (revision != null) SVNRevision.create(revision) else SVNRevision.create(date)
     }
 
     private fun createClientManagerWithCachedAuth(): SVNClientManager {

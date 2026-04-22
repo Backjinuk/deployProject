@@ -1,10 +1,12 @@
 export const theme = {
-    borderRadius:  '8px',
-    primary:       '#4a90E2',    // 파란 계열 메인
-    primaryDark:   '#357ABD',
-    bgSurface:     '#ffffff',
-    bgMuted:       '#f5f7fa',
-    border:        '#e1e8f0',
-    shadow:        '0 4px 10px rgba(0,0,0,0.06)',
-    fgDefault:     '#333333',
+    radius: "18px",
+    brand: "var(--brand-500)",
+    brandDeep: "var(--brand-700)",
+    fgStrong: "var(--text-900)",
+    fgMuted: "var(--text-600)",
+    bgSurface: "var(--surface-0)",
+    bgElevated: "var(--surface-1)",
+    borderSoft: "var(--line-200)",
+    borderStrong: "var(--line-300)",
+    shadowSoft: "0 16px 40px rgba(14, 40, 78, 0.13)",
 };
