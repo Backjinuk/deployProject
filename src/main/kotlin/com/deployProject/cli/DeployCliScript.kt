@@ -2,67 +2,30 @@ package com.deployProject.cli
 
 import java.nio.file.Paths
 
-/**
- * DeployCliScript: 배포·백업·레거시 패치 스크립트 생성기
- */
 class DeployCliScript {
 
-    /**
-     * ASCII 아트 배너
-     */
     private val asciiBanner = """
-██████╗ ███████╗██████╗ ██╗      ██████╗ ██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗
-██╔══██╗██╔════╝██╔══██╗██║     ██╔═══██╗╚██╗ ██╔╝████╗ ████║██╔══██╗████╗  ██║
-██║  ██║█████╗  ██████╔╝██║     ██║   ██║ ╚████╔╝ ██╔████╔██║███████║██╔██╗ ██║
-██║  ██║██╔══╝  ██╔═══╝ ██║     ██║   ██║  ╚██╔╝  ██║╚██╔╝██║██╔══██║██║╚██╗██║
-██████╔╝███████╗██║     ███████╗╚██████╔╝   ██║   ██║ ╚═╝ ██║██║  ██║██║ ╚████║
-╚═════╝ ╚══════╝╚═╝     ╚══════╝ ╚═════╝    ╚═╝   ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+============================================================
+ DEPLOY PROJECT PATCH SCRIPT
+============================================================
 """.trimIndent()
 
-    /**
-     * changedFiles: 절대 또는 프로젝트 기준 상대 경로 리스트
-     * deployDir: 배포 루트 디렉터리
-     */
     fun createDeployScript(
         changedFiles: List<String>,
         deployDir: String
     ): List<Pair<String, List<String>>> {
-
-        // 프로젝트 루트(배포 루트로 사용)
         val rawRoot = Paths.get(deployDir).toAbsolutePath().normalize().toString()
         val root = rawRoot.replace('\\', '/').replaceFirst(Regex("^[A-Za-z]:"), "")
-
-        // 날짜 suffix
         val dateExpr = "\$(date +'%Y%m%d')"
 
-        // 1) 원본 경로 정규화
-        val relPaths = changedFiles.map { raw ->
-            raw.replace('\\', '/')
-                .trimStart('/')
-                .replace(Regex("^(?:\\.\\./)+"), "")
-        }
+        val stagingRelPaths = changedFiles
+            .map(::normalizeRelativePath)
+            .distinct()
 
-        // 2) ✅ Kotlin에서 배포 경로로 미리 매핑 (배포 루트부터 쭉 밑으로 찾기)
-        // - src/main/webapp/*     -> (접두어 제거)          ex) WEB-INF/jsp/..., css/..., js/...
-        // - target/classes/*      -> WEB-INF/classes/*
-        // - target/*/WEB-INF/*    -> WEB-INF/*
-        // - target/*/css/*        -> css/*
-        // - target/*/js/*         -> js/*
-        val mappedRelPaths = relPaths.map { p ->
-            when {
-                p.startsWith("src/main/webapp/") ->
-                    p.removePrefix("src/main/webapp/")
-                p.startsWith("target/classes/") ->
-                    "WEB-INF/classes/" + p.removePrefix("target/classes/")
-                Regex("^target/[^/]+/WEB-INF/").containsMatchIn(p) ->
-                    p.replaceFirst(Regex("^target/[^/]+/"), "")
-                Regex("^target/[^/]+/css/").containsMatchIn(p) ->
-                    "css/" + p.replaceFirst(Regex("^target/[^/]+/css/"), "")
-                Regex("^target/[^/]+/js/").containsMatchIn(p) ->
-                    "js/" + p.replaceFirst(Regex("^target/[^/]+/js/"), "")
-                else -> p
-            }
-        }.toSet() // 중복 제거
+        // 수정 이유: 추출본(STAGING_DIR) 경로와 운영(ROOT) 경로는 구조가 다를 수 있어
+        // src/main/webapp/*, build/classes/* 같은 경로가 섞이면 매칭이 깨진다.
+        // 그래서 스테이징 경로/배포 경로를 분리해 1:1 매핑으로 유지한다.
+        val pathMappings = stagingRelPaths.map { src -> src to mapToDeployRelativePath(src) }.distinct()
 
         val scriptLines = mutableListOf<String>().apply {
             add("#!/usr/bin/env bash")
@@ -72,29 +35,29 @@ class DeployCliScript {
             add("DATE=\"$dateExpr\"")
             add("STAGING_DIR=\"\$HOME/\$DATE\"")
             add("")
-            // ASCII banner
             add("cat << 'BANNER'")
             asciiBanner.lines().forEach { add(it) }
             add("BANNER")
             add("")
-            // 기본 검증
             add("[ -d \"\$ROOT\" ] || { echo \"[ERR] ROOT not found: \$ROOT\" >&2; exit 1; }")
             add("if [ ! -d \"\$STAGING_DIR\" ]; then")
             add("  echo \"[WARN] STAGING_DIR not found: \$STAGING_DIR (skip staging scan)\"")
             add("fi")
             add("")
 
-            // 3) ✅ 스크립트에는 매핑된 경로만 내려보냄
-            add("rel_paths=(")
-            mappedRelPaths.forEach { rel -> add("  \"$rel\"") }
+            add("staging_rel_paths=(")
+            pathMappings.forEach { (stagingRel, _) -> add("  \"$stagingRel\"") }
             add(")")
             add("")
 
-            // STAGING -> changed_files
+            add("deploy_rel_paths=(")
+            pathMappings.forEach { (_, deployRel) -> add("  \"$deployRel\"") }
+            add(")")
+            add("")
+
             add("changed_files=()")
-            add("for rel in \"\${rel_paths[@]}\"; do")
+            add("for rel in \"\${staging_rel_paths[@]}\"; do")
             add("  found=\$(find \"\$STAGING_DIR\" -type f -path \"*/\$rel\" 2>/dev/null | head -n1 || true)")
-            add("  # (선택) 파일명 폴백: 경로 매칭 실패 시 파일명으로 한 번 더 시도")
             add("  if [ -z \"\$found\" ]; then")
             add("    name=\$(basename \"\$rel\")")
             add("    found=\$(find \"\$STAGING_DIR\" -type f -name \"\$name\" 2>/dev/null | head -n1 || true)")
@@ -103,9 +66,8 @@ class DeployCliScript {
             add("done")
             add("")
 
-            // ROOT -> raw_changed_files
             add("raw_changed_files=()")
-            add("for rel in \"\${rel_paths[@]}\"; do")
+            add("for rel in \"\${deploy_rel_paths[@]}\"; do")
             add("  found=\$(find \"\$ROOT\" -type f -path \"*/\$rel\" 2>/dev/null | head -n1 || true)")
             add("  if [ -z \"\$found\" ]; then")
             add("    name=\$(basename \"\$rel\")")
@@ -115,7 +77,6 @@ class DeployCliScript {
             add("done")
             add("")
 
-            // 모드 선택
             add("while true; do")
             add("  echo")
             add("  echo 'Select mode:'")
@@ -126,9 +87,8 @@ class DeployCliScript {
             add("  read -p 'Enter choice (b/d/r/c): ' mode")
             add("  case \"\${mode,,}\" in")
 
-            // Backup only
             add("    b)")
-            add("      echo '▶️  Pending backup operations:'")
+            add("      echo '[INFO] Pending backup operations:'")
             add("      for file in \"\${raw_changed_files[@]}\"; do")
             add("        if [ ! -f \"\$file\" ]; then")
             add("          echo \"[WARN] File not found: \$file\" >&2; continue")
@@ -136,7 +96,7 @@ class DeployCliScript {
             add("        echo \"  \$(basename \"\$file\") -> \$file\"")
             add("      done")
             add("      echo")
-            add("      echo '▶️  Top-level dirs by extension:'")
+            add("      echo '[INFO] Top-level dirs by extension:'")
             add("      declare -A extDirs=()")
             add("      for file in \"\${raw_changed_files[@]}\"; do")
             add("        ext=\${file##*.}; dir=\$(dirname \"\$file\")")
@@ -147,8 +107,8 @@ class DeployCliScript {
             add("      for e in \"\${!extDirs[@]}\"; do echo \"  .\$e -> \${extDirs[\$e]}\"; done")
             add("      echo")
             add("      read -p 'Proceed with Backup? [y/N]: ' ans")
-            add("      case \"\${ans,,}\" in y|yes) ;; *) echo '❌  Backup canceled.'; exit 1;; esac")
-            add("      echo '▶️  Backup start'")
+            add("      case \"\${ans,,}\" in y|yes) ;; *) echo '[CANCEL] Backup canceled.'; exit 1;; esac")
+            add("      echo '[INFO] Backup start'")
             add("      for file in \"\${raw_changed_files[@]}\"; do")
             add("        if [ -f \"\$file\" ]; then")
             add("          base=\$(basename \"\$file\"); dst_dir=\$(dirname \"\$file\")")
@@ -156,24 +116,25 @@ class DeployCliScript {
             add("          echo \"  backed up: \$base -> \$dst_dir/\${base}\$DATE\"")
             add("        fi")
             add("      done")
-            add("      echo '✅  Backup complete.'")
+            add("      echo '[OK] Backup complete.'")
             add("      ;;")
 
-            // Deploy
             add("    d)")
-            add("      echo '▶️  Pending deploy operations:'")
-            add("      for rel in \"\${rel_paths[@]}\"; do")
-            add("        src=\$(find \"\$STAGING_DIR\" -type f -path \"*/\$rel\" 2>/dev/null | head -n1 || true)")
-            add("        [ -z \"\$src\" ] && src=\$(find \"\$STAGING_DIR\" -type f -name \"\$(basename \"\$rel\")\" 2>/dev/null | head -n1 || true)")
-            add("        dst=\$(find \"\$ROOT\" -type f -path \"*/\$rel\" 2>/dev/null | head -n1 || true)")
-            add("        [ -z \"\$dst\" ] && dst=\$(find \"\$ROOT\" -type f -name \"\$(basename \"\$rel\")\" 2>/dev/null | head -n1 || true)")
-            add("        name=\$(basename \"\$rel\")")
+            add("      echo '[INFO] Pending deploy operations:'")
+            add("      for i in \"\${!deploy_rel_paths[@]}\"; do")
+            add("        src_rel=\"\${staging_rel_paths[\$i]}\"")
+            add("        dst_rel=\"\${deploy_rel_paths[\$i]}\"")
+            add("        src=\$(find \"\$STAGING_DIR\" -type f -path \"*/\$src_rel\" 2>/dev/null | head -n1 || true)")
+            add("        [ -z \"\$src\" ] && src=\$(find \"\$STAGING_DIR\" -type f -name \"\$(basename \"\$src_rel\")\" 2>/dev/null | head -n1 || true)")
+            add("        dst=\$(find \"\$ROOT\" -type f -path \"*/\$dst_rel\" 2>/dev/null | head -n1 || true)")
+            add("        [ -z \"\$dst\" ] && dst=\$(find \"\$ROOT\" -type f -name \"\$(basename \"\$dst_rel\")\" 2>/dev/null | head -n1 || true)")
+            add("        name=\$(basename \"\$dst_rel\")")
             add("        if [ -z \"\$src\" ]; then echo \"[WARN] Staging file not found: \$name\" >&2; continue; fi")
             add("        if [ -z \"\$dst\" ]; then echo \"[WARN] Target file not found under ROOT: \$name\" >&2; continue; fi")
             add("        echo \"  \$name: \$src -> \$dst\"")
             add("      done")
             add("      echo")
-            add("      echo '▶️  Top-level dirs by extension:'")
+            add("      echo '[INFO] Top-level dirs by extension:'")
             add("      declare -A extDirs=()")
             add("      for f in \"\${raw_changed_files[@]}\"; do")
             add("        ext=\${f##*.}; dir=\$(dirname \"\$f\")")
@@ -182,24 +143,25 @@ class DeployCliScript {
             add("      for e in \"\${!extDirs[@]}\"; do echo \"  .\$e -> \${extDirs[\$e]}\"; done")
             add("      echo")
             add("      read -p 'Proceed with Deploy? [y/N]: ' ans")
-            add("      case \"\${ans,,}\" in y|yes) ;; *) echo '❌  Deploy canceled.'; exit 1;; esac")
-            add("      echo '▶️  Deploying...'")
-            add("      for rel in \"\${rel_paths[@]}\"; do")
-            add("        src=\$(find \"\$STAGING_DIR\" -type f -path \"*/\$rel\" 2>/dev/null | head -n1 || true)")
-            add("        [ -z \"\$src\" ] && src=\$(find \"\$STAGING_DIR\" -type f -name \"\$(basename \"\$rel\")\" 2>/dev/null | head -n1 || true)")
-            add("        dst=\$(find \"\$ROOT\" -type f -path \"*/\$rel\" 2>/dev/null | head -n1 || true)")
-            add("        [ -z \"\$dst\" ] && dst=\$(find \"\$ROOT\" -type f -name \"\$(basename \"\$rel\")\" 2>/dev/null | head -n1 || true)")
+            add("      case \"\${ans,,}\" in y|yes) ;; *) echo '[CANCEL] Deploy canceled.'; exit 1;; esac")
+            add("      echo '[INFO] Deploying...'")
+            add("      for i in \"\${!deploy_rel_paths[@]}\"; do")
+            add("        src_rel=\"\${staging_rel_paths[\$i]}\"")
+            add("        dst_rel=\"\${deploy_rel_paths[\$i]}\"")
+            add("        src=\$(find \"\$STAGING_DIR\" -type f -path \"*/\$src_rel\" 2>/dev/null | head -n1 || true)")
+            add("        [ -z \"\$src\" ] && src=\$(find \"\$STAGING_DIR\" -type f -name \"\$(basename \"\$src_rel\")\" 2>/dev/null | head -n1 || true)")
+            add("        dst=\$(find \"\$ROOT\" -type f -path \"*/\$dst_rel\" 2>/dev/null | head -n1 || true)")
+            add("        [ -z \"\$dst\" ] && dst=\$(find \"\$ROOT\" -type f -name \"\$(basename \"\$dst_rel\")\" 2>/dev/null | head -n1 || true)")
             add("        if [ -n \"\$src\" ] && [ -n \"\$dst\" ]; then")
             add("          cp \"\$src\" \"\$dst\"")
-            add("          echo \"  deployed: \$(basename \"\$rel\") -> \$dst\"")
+            add("          echo \"  deployed: \$(basename \"\$dst_rel\") -> \$dst\"")
             add("        fi")
             add("      done")
-            add("      echo '✅  Deploy complete.'")
+            add("      echo '[OK] Deploy complete.'")
             add("      ;;")
 
-            // Recover
             add("    r)")
-            add("      echo '▶️  Pending recover operations:'")
+            add("      echo '[INFO] Pending recover operations:'")
             add("      for file in \"\${raw_changed_files[@]}\"; do")
             add("        backup=\"\${file}\$DATE\"")
             add("        if [ ! -f \"\$backup\" ]; then echo \"[WARN] Backup not found: \$backup\" >&2; continue; fi")
@@ -207,8 +169,8 @@ class DeployCliScript {
             add("      done")
             add("      echo")
             add("      read -p 'Proceed with Recover? [y/N]: ' ans")
-            add("      case \"\${ans,,}\" in y|yes) ;; *) echo '❌  Recover canceled.'; exit 1;; esac")
-            add("      echo '▶️  Recovering...'")
+            add("      case \"\${ans,,}\" in y|yes) ;; *) echo '[CANCEL] Recover canceled.'; exit 1;; esac")
+            add("      echo '[INFO] Recovering...'")
             add("      for file in \"\${raw_changed_files[@]}\"; do")
             add("        backup=\"\${file}\$DATE\"")
             add("        if [ -f \"\$backup\" ]; then")
@@ -216,25 +178,51 @@ class DeployCliScript {
             add("          echo \"  recovered: \$(basename \"\$file\") <- \$backup\"")
             add("        fi")
             add("      done")
-            add("      echo '✅  Recover complete.'")
+            add("      echo '[OK] Recover complete.'")
             add("      ;;")
 
-            // Cancel
             add("    c)")
-            add("      echo '❌  Operation canceled by user, exiting.'")
+            add("      echo '[CANCEL] Operation canceled by user, exiting.'")
             add("      break")
             add("      ;;")
 
-            // 잘못된 입력
             add("    *)")
-            add("      echo \"⚠️  Invalid choice: \$mode\" >&2")
+            add("      echo \"[WARN] Invalid choice: \$mode\" >&2")
             add("      ;;")
 
             add("  esac")
             add("done")
-            add("echo '👋  Script finished.'")
+            add("echo '[DONE] Script finished.'")
         }
 
         return listOf("patch.sh" to scriptLines)
+    }
+
+    private fun normalizeRelativePath(raw: String): String {
+        return raw.replace('\\', '/')
+            .trimStart('/')
+            .replace(Regex("^(?:\\.\\./)+"), "")
+    }
+
+    private fun mapToDeployRelativePath(path: String): String {
+        return when {
+            path.startsWith("src/main/webapp/") ->
+                path.removePrefix("src/main/webapp/")
+            Regex("^build/classes/(?:java|kotlin)/main/").containsMatchIn(path) ->
+                "WEB-INF/classes/" + path.replaceFirst(Regex("^build/classes/(?:java|kotlin)/main/"), "")
+            path.startsWith("build/classes/main/") ->
+                "WEB-INF/classes/" + path.removePrefix("build/classes/main/")
+            path.startsWith("target/classes/") ->
+                "WEB-INF/classes/" + path.removePrefix("target/classes/")
+            Regex("^out/production/[^/]+/").containsMatchIn(path) ->
+                "WEB-INF/classes/" + path.replaceFirst(Regex("^out/production/[^/]+/"), "")
+            Regex("^target/[^/]+/WEB-INF/").containsMatchIn(path) ->
+                path.replaceFirst(Regex("^target/[^/]+/"), "")
+            Regex("^target/[^/]+/css/").containsMatchIn(path) ->
+                "css/" + path.replaceFirst(Regex("^target/[^/]+/css/"), "")
+            Regex("^target/[^/]+/js/").containsMatchIn(path) ->
+                "js/" + path.replaceFirst(Regex("^target/[^/]+/js/"), "")
+            else -> path
+        }
     }
 }

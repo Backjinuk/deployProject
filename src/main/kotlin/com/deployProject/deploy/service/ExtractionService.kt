@@ -3,17 +3,33 @@ package com.deployProject.deploy.service
 import com.badlogicgames.packr.Packr
 import com.badlogicgames.packr.PackrConfig
 import com.deployProject.deploy.domain.extraction.ExtractionDto
+import com.deployProject.deploy.domain.extraction.RepositoryDuplicateFileDto
+import com.deployProject.deploy.domain.extraction.RepositoryVersionFileListDto
+import com.deployProject.deploy.domain.extraction.RepositoryVersionListDto
+import com.deployProject.deploy.domain.extraction.RepositoryVersionOptionDto
 import com.deployProject.deploy.domain.extraction.TargetOsStatus
 import com.deployProject.cli.utilCli.JarCreator
 import com.deployProject.cli.utilCli.JlinkCreator
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.diff.DiffEntry
+import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.tmatesoft.svn.core.SVNException
+import org.tmatesoft.svn.core.wc.SVNClientManager
+import org.tmatesoft.svn.core.wc.SVNRevision
+import org.tmatesoft.svn.core.wc.SVNWCUtil
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Date
 import java.util.UUID
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
@@ -46,6 +62,8 @@ class ExtractionService(
 
     /** 타깃 OS별 jlink 결과물(최소 JRE) 루트: custom-jre/<windows|mac|linux> */
     private val customJreBase: Path = Paths.get("").toAbsolutePath().resolve("custom-jre")
+    // 수정 이유: 추출 산출물이 프로젝트 내부에 누적되지 않도록 OS 임시 경로를 작업 루트로 사용한다.
+    private val extractionWorkRoot: Path = Paths.get("").toAbsolutePath().resolve("GitInfoJarFile")
 
     /**
      * jlink 수행 시 사용할 javaHome
@@ -68,16 +86,53 @@ class ExtractionService(
         private const val EXECUTABLE_BASE = "deploy-project-cli"            // Packr 실행파일 베이스
         private const val CFG_NAME = "deploy-project-cli.cfg"               // Packr cfg 파일명
         private const val MAIN_CLASS = "com.deployProject.cli.ExtractionLauncher" // 메인 클래스
+        private const val VERSION_RESULT_LIMIT = 300
     }
+
+    // 수정 이유: 상수 선언 줄이 깨진 상태에서도 컴파일 안정성을 확보하기 위해 필요한 값을 명시적으로 다시 선언한다.
+    private val CFG_NAME = "deploy-project-cli.cfg"
+    private val MAIN_CLASS = "com.deployProject.cli.ExtractionLauncher"
+    private val VERSION_RESULT_LIMIT = 300
+    private val STALE_WORK_DIR_RETENTION_HOURS = 24L
+
+    private val versionDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    private val selectionDelimiter = "|~|"
+    private val keyValueDelimiter = "::"
 
     /**
      * 엔드포인트 진입:
      *  - Fat-JAR 생성 → Packr 포장 → ZIP 산출
      */
     fun extractGitInfo(extractionDto: ExtractionDto): File {
+        cleanupStaleExtractionDirs()
         logger.info("deploy.jar 생성 시작")
 
         val target = extractionDto.targetOs ?: error("targetOs is null")
+        // 수정 이유: 날짜 기반 조회 후 사용자가 시작/종료 버전을 직접 선택해야 하므로 서버에서도 필수값으로 강제한다.
+        val selectedVersions = extractionDto.selectedVersions.orEmpty()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+        val selectedFiles = extractionDto.selectedFiles.orEmpty()
+            .map { it.trim().replace("\\", "/") }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+        val duplicateFileVersionMap = extractionDto.duplicateFileVersionMap.orEmpty()
+            .mapKeys { it.key.trim().replace("\\", "/") }
+            .mapValues { it.value.trim() }
+            .filter { (path, version) -> path.isNotEmpty() && version.isNotEmpty() }
+
+        val hasLegacyVersionRange = !extractionDto.sinceVersion.isNullOrBlank() && !extractionDto.untilVersion.isNullOrBlank()
+        val requiresDiffSelection = !extractionDto.fileStatusType.equals("STATUS", ignoreCase = true)
+
+        // 수정 이유: 버전 체크 방식이 기본 흐름이므로 선택 버전 목록을 우선 사용하고, 기존 범위 방식은 하위 호환으로만 유지한다.
+        if (requiresDiffSelection) {
+            require(selectedVersions.isNotEmpty() || hasLegacyVersionRange) {
+                "selectedVersions is required when DIFF is enabled"
+            }
+        }
 
         // (1) 타깃 OS용 jlink 최소 JRE 확보
         //     - 존재하면 스킵
@@ -102,7 +157,10 @@ class ExtractionService(
                     baseDir.absolutePath,               // 5: jarOutputDir
                     extractionDto.homePath ?: "",       // 6: deployServerDir
                     extractionDto.sinceVersion ?: "",   // 7: sinceVersion
-                    extractionDto.untilVersion ?: ""    // 8: untilVersion
+                    extractionDto.untilVersion ?: "",   // 8: untilVersion
+                    selectedVersions.joinToString(selectionDelimiter), // 9: selectedVersions
+                    selectedFiles.joinToString(selectionDelimiter),    // 10: selectedFiles
+                    encodeDuplicateFileVersionMap(duplicateFileVersionMap) // 11: duplicateFileVersionMap
                 ).toTypedArray()
             )
         }
@@ -114,6 +172,8 @@ class ExtractionService(
         // (5) Packr 포장 (템플릿 캐시 활용)
         //     - 템플릿 있으면: 복사 + JAR/CFG 덮어쓰기 (빠름)
         //     - 템플릿 없으면: 최초 1회 Packr 실행 → 템플릿 생성
+        // 수정 이유: 오래된 packr-template 캐시로 exe 실행이 실패하는 문제를 피하기 위해 매 요청 템플릿을 갱신한다.
+        packrTemplateDir(target).takeIf { it.exists() }?.deleteRecursively()
         val tPackr = measureTimeMillis {
             packWithPackr(jarFile, target, outputDir)
         }
@@ -125,6 +185,360 @@ class ExtractionService(
         logger.info("ZIP 생성 완료: {}", zipFile.absolutePath)
 
         return zipFile
+    }
+
+    fun cleanupExtractionArtifacts(zipFile: File) {
+        val workDir = zipFile.parentFile ?: return
+        val workDirPath = runCatching { workDir.toPath().toRealPath() }.getOrElse { return }
+        val managedRoot = runCatching {
+            Files.createDirectories(extractionWorkRoot)
+            extractionWorkRoot.toRealPath()
+        }.getOrElse { return }
+
+        // 수정 이유: 서비스가 생성한 임시 작업 경로만 삭제 대상으로 제한한다.
+        if (!workDirPath.startsWith(managedRoot)) return
+
+        runCatching {
+            workDir.deleteRecursively()
+        }.onFailure { error ->
+            logger.warn("Failed to cleanup extraction work directory: {}", workDir.absolutePath, error)
+        }
+    }
+
+    fun listRepositoryVersions(extractionDto: ExtractionDto): RepositoryVersionListDto {
+        val repoMetaDir = resolveRepositoryMetaDir(extractionDto.localPath)
+        val rawSinceDate = parseDateOrToday(extractionDto.since)
+        val rawUntilDate = parseDateOrToday(extractionDto.until)
+        val sinceDate = minOf(rawSinceDate, rawUntilDate)
+        val untilDate = maxOf(rawSinceDate, rawUntilDate)
+
+        // 수정 이유: 날짜 선택 이후 그 범위에 포함된 버전만 프론트 선택 목록으로 내려주기 위함.
+        return when (repoMetaDir.name.lowercase()) {
+            ".git" -> listGitVersions(repoMetaDir.parentFile, sinceDate, untilDate)
+            ".svn" -> listSvnVersions(repoMetaDir.parentFile, sinceDate, untilDate)
+            else -> RepositoryVersionListDto(vcsType = "UNKNOWN", versions = emptyList())
+        }
+    }
+
+    fun listVersionFiles(extractionDto: ExtractionDto): RepositoryVersionFileListDto {
+        val repoMetaDir = resolveRepositoryMetaDir(extractionDto.localPath)
+        val selectedVersions = extractionDto.selectedVersions.orEmpty()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+        // 수정 이유: 체크된 버전이 없으면 파일 목록도 비워서 프론트에서 잘못된 이전 상태를 유지하지 않게 한다.
+        if (selectedVersions.isEmpty()) {
+            return when (repoMetaDir.name.lowercase()) {
+                ".git" -> RepositoryVersionFileListDto(vcsType = "GIT", files = emptyList())
+                ".svn" -> RepositoryVersionFileListDto(vcsType = "SVN", files = emptyList())
+                else -> RepositoryVersionFileListDto(vcsType = "UNKNOWN", files = emptyList())
+            }
+        }
+
+        return when (repoMetaDir.name.lowercase()) {
+            ".git" -> listGitVersionFiles(repoMetaDir.parentFile, selectedVersions)
+            ".svn" -> listSvnVersionFiles(repoMetaDir.parentFile, selectedVersions)
+            else -> RepositoryVersionFileListDto(vcsType = "UNKNOWN", files = emptyList())
+        }
+    }
+
+    private fun listGitVersions(workTree: File, sinceDate: LocalDate, untilDate: LocalDate): RepositoryVersionListDto {
+        val zone = ZoneId.systemDefault()
+        val versions = Git.open(workTree).use { git ->
+            git.log().call()
+                .asSequence()
+                .map { commit ->
+                    val committedAt = Instant.ofEpochSecond(commit.commitTime.toLong()).atZone(zone).toLocalDateTime()
+                    commit to committedAt
+                }
+                .filter { (_, committedAt) ->
+                    val date = committedAt.toLocalDate()
+                    !date.isBefore(sinceDate) && !date.isAfter(untilDate)
+                }
+                .map { (commit, committedAt) ->
+                    val shortHash = commit.name.take(12)
+                    val committedAtText = committedAt.format(versionDateFormatter)
+                    RepositoryVersionOptionDto(
+                        value = commit.name,
+                        label = "$shortHash | $committedAtText | ${commit.shortMessage}",
+                        committedAt = committedAtText
+                    )
+                }
+                .take(VERSION_RESULT_LIMIT)
+                .toList()
+        }
+
+        return RepositoryVersionListDto(vcsType = "GIT", versions = versions)
+    }
+
+    private fun listGitVersionFiles(workTree: File, selectedVersions: List<String>): RepositoryVersionFileListDto {
+        val fileVersionMap = linkedMapOf<String, MutableSet<String>>()
+        val versionOptionMap = linkedMapOf<String, RepositoryVersionOptionDto>()
+        val resolvedOrder = mutableListOf<String>()
+        val zone = ZoneId.systemDefault()
+
+        runCatching {
+            Git.open(workTree).use { git ->
+                val repo = git.repository
+                selectedVersions.forEach { revision ->
+                    val commitId = runCatching { repo.resolve(revision) }.getOrNull() ?: return@forEach
+                    val commit = git.log().add(commitId).setMaxCount(1).call().firstOrNull() ?: return@forEach
+                    val versionId = commit.name
+                    val newTreeId = repo.resolve("${versionId}^{tree}") ?: return@forEach
+                    if (versionId !in resolvedOrder) resolvedOrder.add(versionId)
+
+                    val committedAtText = Instant.ofEpochSecond(commit.commitTime.toLong())
+                        .atZone(zone)
+                        .toLocalDateTime()
+                        .format(versionDateFormatter)
+                    versionOptionMap[versionId] = RepositoryVersionOptionDto(
+                        value = versionId,
+                        label = "${versionId.take(12)} | $committedAtText | ${commit.shortMessage}",
+                        committedAt = committedAtText
+                    )
+
+                    repo.newObjectReader().use { reader ->
+                        val oldTree = commit.parents.firstOrNull()?.let { parent ->
+                            repo.resolve("${parent.name}^{tree}")?.let { treeId ->
+                                CanonicalTreeParser().apply { reset(reader, treeId) }
+                            }
+                        }
+                        val newTree = CanonicalTreeParser().apply { reset(reader, newTreeId) }
+
+                        git.diff()
+                            .setOldTree(oldTree)
+                            .setNewTree(newTree)
+                            .call()
+                            .mapNotNull { diff ->
+                                val raw = if (diff.changeType == DiffEntry.ChangeType.DELETE) diff.oldPath else diff.newPath
+                                raw.takeUnless { it.isNullOrBlank() || it == DiffEntry.DEV_NULL }
+                            }
+                            .mapNotNull { normalizeRepoRelativePath(it, workTree) }
+                            .forEach { path ->
+                                fileVersionMap.getOrPut(path) { linkedSetOf() }.add(versionId)
+                            }
+                    }
+                }
+            }
+        }.onFailure { error ->
+            logger.warn("Git version file listing failed", error)
+        }
+
+        val files = fileVersionMap.keys.sorted()
+        val duplicateFiles = buildDuplicateFiles(fileVersionMap, versionOptionMap, resolvedOrder)
+        return RepositoryVersionFileListDto(vcsType = "GIT", files = files, duplicateFiles = duplicateFiles)
+    }
+
+    private fun listSvnVersions(workTree: File, sinceDate: LocalDate, untilDate: LocalDate): RepositoryVersionListDto {
+        val zone = ZoneId.systemDefault()
+        val startDate = Date.from(sinceDate.atStartOfDay(zone).toInstant())
+        val endDate = Date.from(untilDate.plusDays(1).atStartOfDay(zone).minusNanos(1).toInstant())
+        val options = mutableListOf<RepositoryVersionOptionDto>()
+
+        runCatching {
+            val client = createSvnClientManager()
+            client.logClient.doLog(
+                arrayOf(workTree),
+                SVNRevision.create(startDate),
+                SVNRevision.create(endDate),
+                false,
+                true,
+                VERSION_RESULT_LIMIT.toLong()
+            ) { logEntry ->
+                val committedAt = logEntry.date?.toInstant()?.atZone(zone)?.toLocalDateTime()
+                    ?.format(versionDateFormatter)
+                    ?: ""
+                val revision = logEntry.revision.toString()
+                val shortMessage = logEntry.message?.lineSequence()?.firstOrNull().orEmpty()
+                options.add(
+                    RepositoryVersionOptionDto(
+                        value = revision,
+                        label = "r$revision | $committedAt | $shortMessage",
+                        committedAt = committedAt
+                    )
+                )
+            }
+        }.onFailure { error ->
+            if (error is SVNException) {
+                logger.warn("SVN revision listing failed: {}", error.message)
+            } else {
+                logger.warn("SVN revision listing failed", error)
+            }
+        }
+
+        return RepositoryVersionListDto(vcsType = "SVN", versions = options.sortedByDescending { it.value.toLongOrNull() ?: -1L })
+    }
+
+    private fun listSvnVersionFiles(workTree: File, selectedVersions: List<String>): RepositoryVersionFileListDto {
+        val fileVersionMap = linkedMapOf<String, MutableSet<String>>()
+        val versionOptionMap = linkedMapOf<String, RepositoryVersionOptionDto>()
+        val resolvedOrder = mutableListOf<String>()
+        val zone = ZoneId.systemDefault()
+
+        runCatching {
+            val client = createSvnClientManager()
+            selectedVersions.mapNotNull { it.toLongOrNull() }.distinct().forEach { revision ->
+                val versionId = revision.toString()
+                if (versionId !in resolvedOrder) resolvedOrder.add(versionId)
+                val rev = SVNRevision.create(revision)
+
+                client.logClient.doLog(
+                    arrayOf(workTree),
+                    rev,
+                    rev,
+                    false,
+                    true,
+                    1L
+                ) { logEntry ->
+                    val committedAt = logEntry.date?.toInstant()?.atZone(zone)?.toLocalDateTime()
+                        ?.format(versionDateFormatter)
+                        ?: ""
+                    val shortMessage = logEntry.message?.lineSequence()?.firstOrNull().orEmpty()
+                    versionOptionMap[versionId] = RepositoryVersionOptionDto(
+                        value = versionId,
+                        label = "r$versionId | $committedAt | $shortMessage",
+                        committedAt = committedAt
+                    )
+
+                    logEntry.changedPaths.values.forEach { change ->
+                        val path = change.path?.trim().orEmpty()
+                        if (path.isNotEmpty()) {
+                            val normalized = normalizeRepoRelativePath(path, workTree)
+                            if (normalized != null) {
+                                fileVersionMap.getOrPut(normalized) { linkedSetOf() }.add(versionId)
+                            }
+                        }
+                    }
+                }
+            }
+        }.onFailure { error ->
+            if (error is SVNException) {
+                logger.warn("SVN version file listing failed: {}", error.message)
+            } else {
+                logger.warn("SVN version file listing failed", error)
+            }
+        }
+
+        val files = fileVersionMap.keys.sorted()
+        val duplicateFiles = buildDuplicateFiles(fileVersionMap, versionOptionMap, resolvedOrder)
+        return RepositoryVersionFileListDto(vcsType = "SVN", files = files, duplicateFiles = duplicateFiles)
+    }
+
+    private fun buildDuplicateFiles(
+        fileVersionMap: Map<String, Set<String>>,
+        versionOptionMap: Map<String, RepositoryVersionOptionDto>,
+        resolvedOrder: List<String>
+    ): List<RepositoryDuplicateFileDto> {
+        val order = resolvedOrder.withIndex().associate { it.value to it.index }
+
+        return fileVersionMap.entries.asSequence()
+            .filter { it.value.size > 1 }
+            .map { (path, versionIds) ->
+                val options = versionIds
+                    .sortedBy { order[it] ?: Int.MAX_VALUE }
+                    .map { versionId ->
+                        versionOptionMap[versionId] ?: RepositoryVersionOptionDto(
+                            value = versionId,
+                            label = versionId,
+                            committedAt = ""
+                        )
+                    }
+                RepositoryDuplicateFileDto(path = path, versions = options)
+            }
+            .sortedBy { it.path }
+            .toList()
+    }
+
+    private fun normalizeRepoRelativePath(rawPath: String, workTree: File): String? {
+        var normalized = rawPath.trim().replace("\\", "/")
+        if (normalized.isBlank() || normalized == DiffEntry.DEV_NULL) return null
+        normalized = normalized.removePrefix("/")
+        val rootPrefix = "${workTree.name}/"
+        if (normalized.startsWith(rootPrefix, ignoreCase = true)) {
+            normalized = normalized.substring(rootPrefix.length)
+        }
+        normalized = normalized.removePrefix("./")
+        return normalized.takeIf { it.isNotBlank() }
+    }
+
+    private fun encodeDuplicateFileVersionMap(data: Map<String, String>): String {
+        return data.entries.joinToString(selectionDelimiter) { (path, version) ->
+            "$path$keyValueDelimiter$version"
+        }
+    }
+
+    private fun createSvnClientManager(): SVNClientManager {
+        val configDir = detectSvnConfigDir()
+        require(configDir.exists()) { "SVN config directory not found: ${configDir.path}" }
+        val opts = SVNWCUtil.createDefaultOptions(configDir, true)
+        val auth = SVNWCUtil.createDefaultAuthenticationManager(configDir)
+        return SVNClientManager.newInstance(opts, auth)
+    }
+
+    private fun detectSvnConfigDir(): File {
+        return if (hostOsName.contains("windows")) {
+            File(System.getenv("APPDATA"), "Subversion")
+        } else {
+            File(System.getProperty("user.home"), ".subversion")
+        }
+    }
+
+    private fun resolveRepositoryMetaDir(localPath: String?): File {
+        val basePath = localPath?.trim().orEmpty()
+        require(basePath.isNotEmpty()) { "localPath is required" }
+
+        val start = File(basePath).canonicalFile
+        val startDir = if (start.isDirectory) start else start.parentFile
+            ?: error("Repository path is invalid: $basePath")
+
+        // 수정 이유: 사용자가 하위 디렉터리를 선택해도 상위로 올라가며 .git/.svn을 자동 감지한다.
+        findMetaFromAncestors(startDir)?.let { return it }
+
+        // 수정 이유: 워크스페이스 루트가 입력된 경우를 위해 제한된 깊이에서 하위 디렉터리도 탐색한다.
+        findMetaFromDescendants(startDir, maxDepth = 4)?.let { return it }
+
+        error("Repository metadata directory not found under/above: $basePath")
+    }
+
+    private fun findMetaFromAncestors(startDir: File): File? {
+        var current: File? = startDir
+        while (current != null) {
+            resolveMetaDirAt(current)?.let { return it }
+            current = current.parentFile
+        }
+        return null
+    }
+
+    private fun findMetaFromDescendants(startDir: File, maxDepth: Int): File? {
+        return runCatching {
+            Files.walk(startDir.toPath(), maxDepth).use { stream ->
+                stream
+                    .filter(Files::isDirectory)
+                    .map { dir -> resolveMetaDirAt(dir.toFile()) }
+                    .filter { it != null }
+                    .findFirst()
+                    .orElse(null)
+            }
+        }.getOrNull()
+    }
+
+    private fun resolveMetaDirAt(dir: File): File? {
+        if (!dir.isDirectory) return null
+        if (dir.name.equals(".git", true) || dir.name.equals(".svn", true)) return dir
+
+        val gitDir = File(dir, ".git")
+        if (gitDir.isDirectory) return gitDir
+
+        val svnDir = File(dir, ".svn")
+        if (svnDir.isDirectory) return svnDir
+
+        return null
+    }
+
+    private fun parseDateOrToday(raw: String?): LocalDate {
+        val text = raw?.substringBefore("T")?.trim().orEmpty()
+        return if (text.isBlank()) LocalDate.now() else LocalDate.parse(text)
     }
 
     /**
@@ -293,20 +707,57 @@ class ExtractionService(
      *  - 리눅스(서버): 작업 디렉터리 기준 상위 2단계를 프로젝트 루트로 보고 그 아래에 생성
      */
     private fun resolveBaseDir(): File {
-        var base = File("GitInfoJarFile", UUID.randomUUID().toString())
+        // 수정 이유: 작업 산출물을 공용 임시 루트 아래 UUID 폴더로 분리하면 요청 단위 정리가 안전해진다.
+        val managedBase = extractionWorkRoot.resolve(UUID.randomUUID().toString()).toFile()
+        if (!managedBase.exists()) managedBase.mkdirs()
+        return managedBase
+        /*
 
-        if (!hostOsName.contains("windows") && !hostOsName.contains("mac")) {
-            val wd = Paths.get("").toAbsolutePath()
-            val projectRoot = wd.parent?.parent
+        
+
+        
+        
+        
                 ?: throw IllegalStateException("작업 디렉터리 기준으로 두 단계 상위가 존재하지 않습니다.")
             base = File(projectRoot.toAbsolutePath().resolve("GitInfoJarFile").toString(), UUID.randomUUID().toString())
         }
 
         if (!base.exists()) base.mkdirs()
         return base
+        */
     }
 
     /** 디렉터리 → ZIP 압축 (상대 경로 유지) */
+    private fun cleanupStaleExtractionDirs() {
+        runCatching {
+            Files.createDirectories(extractionWorkRoot)
+            
+            val expireBefore = System.currentTimeMillis() - STALE_WORK_DIR_RETENTION_HOURS * 60 * 60 * 1000
+
+            cleanupStaleDirsUnder(extractionWorkRoot.toFile(), expireBefore)
+            cleanupStaleDirsUnder(File("GitInfoJarFile"), expireBefore)
+        
+        
+        
+                    // 수정 이유: 비정상 종료로 남은 작업 폴더를 다음 요청에서 정리해 누적을 막는다.
+        
+        
+        }.onFailure { error ->
+            logger.warn("Failed to cleanup stale extraction directories: {}", extractionWorkRoot, error)
+        }
+    }
+
+    private fun cleanupStaleDirsUnder(root: File, expireBefore: Long) {
+        if (!root.exists() || !root.isDirectory) return
+        root.listFiles()
+            ?.asSequence()
+            ?.filter { it.isDirectory }
+            ?.filter { it.lastModified() < expireBefore }
+            ?.forEach { oldDir ->
+                oldDir.deleteRecursively()
+            }
+    }
+
     private fun zipDirectory(sourceDir: File, targetZip: File) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
             zos.setLevel(Deflater.BEST_SPEED)

@@ -18,6 +18,15 @@ class ExtractionDto {
 
     var untilVersion: String? = null
 
+    // 수정 이유: 버전 드롭다운 범위가 아닌 다중 선택 체크 방식으로 변경되어 선택 버전 목록을 직접 전달한다.
+    var selectedVersions: List<String>? = null
+
+    // 수정 이유: 선택한 버전의 변경 파일 목록 중 사용자가 체크한 파일만 추출하기 위해 전달한다.
+    var selectedFiles: List<String>? = null
+
+    // 수정 이유: 동일 파일이 여러 버전에 걸쳐 변경된 경우 파일별 기준 버전을 함께 전달한다.
+    var duplicateFileVersionMap: Map<String, String>? = null
+
     var localPath : String ?= null
 
     var homePath : String  ?= null
