@@ -1,9 +1,13 @@
 package com.deployProject.deploy.controller
 
 import com.deployProject.deploy.domain.deployUser.DeployUserDto
+import com.deployProject.deploy.domain.site.DirectoryPickerRequestDto
+import com.deployProject.deploy.domain.site.DirectoryPickerResponseDto
 import com.deployProject.deploy.domain.site.SiteDto
 import com.deployProject.deploy.service.DeployService
+import com.deployProject.deploy.service.LocalDirectoryPicker
 import org.springframework.http.HttpStatus
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -58,5 +62,20 @@ class DeployController(
     @RequestMapping("/api/deletePath")
     fun deletePath(@RequestBody siteDto : SiteDto) {
         deployService.updatePath(siteDto)
+    }
+
+    @PostMapping("/api/select-directory")
+    fun selectDirectory(@RequestBody request: DirectoryPickerRequestDto): DirectoryPickerResponseDto {
+        val path = runCatching {
+            LocalDirectoryPicker.chooseDirectory(request.currentPath, request.title)
+        }.getOrElse { error ->
+            throw ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                error.message ?: "Failed to open directory picker.",
+                error
+            )
+        }
+
+        return DirectoryPickerResponseDto(path)
     }
 }

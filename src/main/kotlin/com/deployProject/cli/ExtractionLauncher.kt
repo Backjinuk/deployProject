@@ -1,6 +1,7 @@
 package com.deployProject.cli
 
 import com.deployProject.cli.infoCli.GitInfoCli
+import com.deployProject.cli.infoCli.LocalInfoCli
 import com.deployProject.cli.infoCli.SvnInfoCli
 import com.deployProject.cli.utilCli.GitUtil
 import java.io.File
@@ -17,13 +18,21 @@ object ExtractionLauncher {
     private const val SELECTION_DELIMITER = "|~|"
     private const val KEY_VALUE_DELIMITER = "::"
 
+    private enum class RepositoryMode {
+        GIT,
+        SVN,
+        LOCAL
+    }
+
+    private data class RepositoryTarget(
+        val mode: RepositoryMode,
+        val path: File
+    )
+
     @JvmStatic
     fun main(args: Array<String>) {
         val defaults = loadDefaultsOrNull()
-
-        // 수정 이유: 기존 코드는 main(args)를 사실상 무시해서 defaults.properties가 없으면 즉시 실패했다.
-        // CLI/테스트/서버 실행 모두에서 동작하도록 args 우선, defaults fallback 구조로 변경한다.
-        val repoMetaDir = resolveRepositoryDir(args, defaults)
+        val repositoryTarget = resolveRepositoryTarget(args, defaults)
         val sinceRaw = firstNonBlank(args.getOrNull(2), defaults?.getProperty("since"))
         val untilRaw = firstNonBlank(args.getOrNull(3), defaults?.getProperty("until"))
         val statusTypeRaw = firstNonBlank(args.getOrNull(4), defaults?.getProperty("statusType"), "ALL")
@@ -34,6 +43,7 @@ object ExtractionLauncher {
         val duplicateFileVersionMap = parseSelectionMap(
             firstNonBlank(args.getOrNull(11), defaults?.getProperty("duplicateFileVersionMap"))
         )
+        val jdkPath = firstNonBlank(args.getOrNull(12), defaults?.getProperty("jdkPath"))
         val deployServerDir = firstNonBlank(
             args.getOrNull(6),
             defaults?.getProperty("deployServerDir"),
@@ -45,35 +55,52 @@ object ExtractionLauncher {
         val sinceSvn: Date = GitUtil.parseDateArg(sinceRaw, svnDateFormat)
         val untilSvn: Date = GitUtil.parseDateArg(untilRaw, svnDateFormat)
         val statusType = GitUtil.parseStatusType(statusTypeRaw)
-        val repoPath = repoMetaDir.path.replace(File.separator, "/")
+        val repoPath = repositoryTarget.path.path.replace(File.separator, "/")
 
-        if (repoMetaDir.name.equals(".git", ignoreCase = true)) {
-            // 수정 이유: 날짜 기반 필터에 더해 저장소 버전 범위도 함께 전달한다.
-            GitInfoCli().gitCliExecution(
-                repoPath = repoPath,
-                since = sinceGit,
-                until = untilGit,
-                fileStatusType = statusType,
-                deployServerDir = deployServerDir,
-                sinceVersion = sinceVersion,
-                untilVersion = untilVersion,
-                selectedVersions = selectedVersions,
-                selectedFiles = selectedFiles,
-                duplicateFileVersionMap = duplicateFileVersionMap
-            )
-        } else {
-            SvnInfoCli().svnCliExecution(
-                repoPath = repoPath,
-                since = sinceSvn,
-                until = untilSvn,
-                fileStatusType = statusType,
-                deployServerDir = deployServerDir,
-                sinceVersion = sinceVersion,
-                untilVersion = untilVersion,
-                selectedVersions = selectedVersions,
-                selectedFiles = selectedFiles,
-                duplicateFileVersionMap = duplicateFileVersionMap
-            )
+        when (repositoryTarget.mode) {
+            RepositoryMode.GIT -> {
+                GitInfoCli().gitCliExecution(
+                    repoPath = repoPath,
+                    since = sinceGit,
+                    until = untilGit,
+                    fileStatusType = statusType,
+                    deployServerDir = deployServerDir,
+                    jdkPath = jdkPath,
+                    sinceVersion = sinceVersion,
+                    untilVersion = untilVersion,
+                    selectedVersions = selectedVersions,
+                    selectedFiles = selectedFiles,
+                    duplicateFileVersionMap = duplicateFileVersionMap
+                )
+            }
+
+            RepositoryMode.SVN -> {
+                SvnInfoCli().svnCliExecution(
+                    repoPath = repoPath,
+                    since = sinceSvn,
+                    until = untilSvn,
+                    fileStatusType = statusType,
+                    deployServerDir = deployServerDir,
+                    jdkPath = jdkPath,
+                    sinceVersion = sinceVersion,
+                    untilVersion = untilVersion,
+                    selectedVersions = selectedVersions,
+                    selectedFiles = selectedFiles,
+                    duplicateFileVersionMap = duplicateFileVersionMap
+                )
+            }
+
+            RepositoryMode.LOCAL -> {
+                LocalInfoCli().localCliExecution(
+                    repoPath = repoPath,
+                    since = sinceGit,
+                    until = untilGit,
+                    fileStatusType = statusType,
+                    deployServerDir = deployServerDir,
+                    jdkPath = jdkPath,
+                    selectedFiles = selectedFiles
+                )
+            }
         }
     }
 
@@ -83,7 +110,7 @@ object ExtractionLauncher {
         }
     }
 
-    private fun resolveRepositoryDir(args: Array<String>, defaults: Properties?): File {
+    private fun resolveRepositoryTarget(args: Array<String>, defaults: Properties?): RepositoryTarget {
         val repoPath = firstNonBlank(args.getOrNull(0), defaults?.getProperty("repoDir"))
             ?: error("repoDir is required. Use args[0] or defaults.properties(repoDir).")
 
@@ -91,13 +118,21 @@ object ExtractionLauncher {
         val startDir = if (start.isDirectory) start else start.parentFile
             ?: error("Repository path is invalid: $repoPath")
 
-        // 수정 이유: 추출 시 입력 경로가 저장소 하위여도 상위 경로까지 탐색해서 메타 디렉터리를 자동 감지한다.
-        findMetaFromAncestors(startDir)?.let { return it }
+        findMetaFromAncestors(startDir)?.let { metaDir ->
+            return RepositoryTarget(
+                mode = if (metaDir.name.equals(".git", ignoreCase = true)) RepositoryMode.GIT else RepositoryMode.SVN,
+                path = metaDir
+            )
+        }
 
-        // 수정 이유: 워크스페이스 루트를 입력한 경우를 위해 제한 깊이로 하위 경로도 탐색한다.
-        findMetaFromDescendants(startDir, maxDepth = 4)?.let { return it }
+        findMetaFromDescendants(startDir, maxDepth = 4)?.let { metaDir ->
+            return RepositoryTarget(
+                mode = if (metaDir.name.equals(".git", ignoreCase = true)) RepositoryMode.GIT else RepositoryMode.SVN,
+                path = metaDir
+            )
+        }
 
-        error("Git/SVN metadata directory not found under/above: $repoPath")
+        return RepositoryTarget(RepositoryMode.LOCAL, startDir)
     }
 
     private fun findMetaFromAncestors(startDir: File): File? {

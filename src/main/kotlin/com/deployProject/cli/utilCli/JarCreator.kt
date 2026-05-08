@@ -194,6 +194,7 @@ object JarCreator {
         val selectedVersions = args.getOrNull(9)?.takeIf { it.isNotBlank() } ?: ""
         val selectedFiles = args.getOrNull(10)?.takeIf { it.isNotBlank() } ?: ""
         val duplicateFileVersionMap = args.getOrNull(11)?.takeIf { it.isNotBlank() } ?: ""
+        val jdkPath = args.getOrNull(12)?.takeIf { it.isNotBlank() } ?: ""
 
         val defaults = mapOf(
             "repoDir" to repoDir,
@@ -206,7 +207,8 @@ object JarCreator {
             "untilVersion" to untilVersion,
             "selectedVersions" to selectedVersions,
             "selectedFiles" to selectedFiles,
-            "duplicateFileVersionMap" to duplicateFileVersionMap
+            "duplicateFileVersionMap" to duplicateFileVersionMap,
+            "jdkPath" to jdkPath
         )
 
         val sourceDirPath = if (os.contains("windows") || os.contains("mac")) {

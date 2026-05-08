@@ -7,24 +7,33 @@ import com.deployProject.cli.utilCli.GitUtil.allowsStatus
 import com.deployProject.deploy.domain.site.FileStatusType
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
+import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevCommit
 import org.eclipse.jgit.revwalk.RevWalk
-import org.eclipse.jgit.treewalk.TreeWalk
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.treewalk.TreeWalk
 import org.slf4j.LoggerFactory
-import java.awt.GraphicsEnvironment
 import java.io.File
+import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Date
-import javax.swing.JOptionPane
 
 class GitInfoCli {
     private val log = LoggerFactory.getLogger(GitInfoCli::class.java)
+
+    private data class DiffSelection(
+        val paths: List<String>,
+        val revisionByPath: Map<String, String>
+    ) {
+        companion object {
+            val EMPTY = DiffSelection(emptyList(), emptyMap())
+        }
+    }
 
     fun gitCliExecution(
         repoPath: String,
@@ -32,6 +41,7 @@ class GitInfoCli {
         until: LocalDate,
         fileStatusType: FileStatusType,
         deployServerDir: String,
+        jdkPath: String?,
         sinceVersion: String?,
         untilVersion: String?,
         selectedVersions: List<String>,
@@ -41,7 +51,11 @@ class GitInfoCli {
         val workTree = GitUtil.parseDir(repoPath, "git")
         val outputDir = GitUtil.determineDesktopOutputDir()
 
-        GitUtil.showProgressAndRun(initialMessage = "Git deploy extracting...") {
+        GitUtil.showProgressAndRun(
+            title = "배포 파일 생성",
+            initialMessage = "Git 변경 파일을 정리하고 있습니다.",
+            detailMessage = "선택한 버전 기준 파일 수집, 클래스 생성, 패치 스크립트 생성을 진행합니다."
+        ) {
             Git.open(workTree).use { git ->
                 val repo = git.repository
                 val artifactProfile = GitUtil.resolveArtifactProfile(workTree)
@@ -53,8 +67,8 @@ class GitInfoCli {
                     emptyList()
                 }
 
-                val diffPaths = if (fileStatusType.allowsDiff()) {
-                    collectDiffPaths(
+                val diffSelection = if (fileStatusType.allowsDiff()) {
+                    collectDiffSelection(
                         repo = repo,
                         since = since,
                         until = until,
@@ -65,83 +79,60 @@ class GitInfoCli {
                         duplicateFileVersionMap = duplicateFileVersionMap
                     )
                 } else {
-                    emptyList()
+                    DiffSelection.EMPTY
                 }
 
-                GitUtil.buildLatestClassMap(workTree, statusPaths + diffPaths)
                 val statusEntries = if (statusPaths.isEmpty()) {
                     emptyList()
                 } else {
-                    GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
+                    if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY && statusPaths.any(::isJvmSourcePath)) {
+                        GitUtil.compileJvmProject(workTree, jdkPath)
+                    }
+                    GitUtil.buildLatestClassMap(workTree, statusPaths)
+                    GitUtil.normalizeExtractionPaths(
+                        workTree,
+                        GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
+                    )
                 }
-                val diffEntries = if (diffPaths.isEmpty()) {
+
+                val diffEntries = if (diffSelection.paths.isEmpty()) {
                     emptyList()
                 } else {
-                    GitUtil.mapPathsForExtraction(diffPaths, artifactProfile)
+                    when (artifactProfile) {
+                        GitUtil.ArtifactProfile.RAW_FILE_COPY ->
+                            writeSelectedRevisionRawFiles(outputDir, repo, diffSelection.revisionByPath)
+                        GitUtil.ArtifactProfile.JVM_CLASS_ONLY ->
+                            writeSelectedRevisionArtifacts(outputDir, repo, diffSelection.revisionByPath, jdkPath)
+                    }
                 }
+
                 if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY) {
-                    val changedSourceCount = (statusPaths + diffPaths).count {
-                        it.endsWith(".java", ignoreCase = true) || it.endsWith(".kt", ignoreCase = true)
-                    }
+                    val changedSourceCount = (statusPaths + diffSelection.paths).count(::isJvmSourcePath)
                     val classEntryCount = (statusEntries + diffEntries).count { it.endsWith(".class", ignoreCase = true) }
-                    // Modified because class-only mode can look empty when build artifacts do not exist.
                     if (changedSourceCount > 0 && classEntryCount == 0) {
-                        log.warn("No class artifacts found. Build the project before extraction.")
+                        log.warn("No class artifacts found for selected Git revisions.")
                     }
                 }
 
-                // 수정 이유: exe 실행 시 zip 대신 바탕화면 디렉토리 결과물을 바로 확인할 수 있도록 변경한다.
-                if (fileStatusType.allowsDiff()) {
-                    GitUtil.addDirectoryEntry(outputDir, workTree, diffEntries, allowBuildArtifacts)
-                }
                 if (fileStatusType.allowsStatus()) {
-                    GitUtil.addDirectoryEntry(outputDir, workTree, statusEntries, allowBuildArtifacts)
+                    val selectedDiffEntrySet = diffEntries.toSet()
+                    val statusEntriesToCopy = statusEntries.filterNot { it in selectedDiffEntrySet }
+                    GitUtil.addDirectoryEntry(outputDir, workTree, statusEntriesToCopy, allowBuildArtifacts)
                 }
 
-                DeployCliScript().createDeployScript(
-                    listOf(diffEntries, statusEntries).flatMap { it }.distinct(),
-                    deployServerDir
-                ).forEach { (name, line) ->
+                val allEntries = listOf(diffEntries, statusEntries).flatMap { it }.distinct()
+                DeployCliScript().createDeployScript(allEntries, deployServerDir).forEach { (name, line) ->
                     GitUtil.writeTextOutputFile(outputDir, name, line.joinToString("\n"))
-                }
-
-                // 수정 이유: 중복 파일에서 사용자가 고른 버전의 실제 파일 내용을 결과물에 반영한다.
-                val appliedOverrides = if (artifactProfile == GitUtil.ArtifactProfile.RAW_FILE_COPY) {
-                    val duplicateSelections = duplicateFileVersionMap
-                        .mapKeys { normalizePath(it.key) }
-                        .mapValues { it.value.trim() }
-                        .filter { (path, version) -> path.isNotEmpty() && version.isNotEmpty() }
-                    applyDuplicateVersionSelections(outputDir, repo, duplicateSelections)
-                } else {
-                    // Modified because class-only extraction cannot safely override source file bytes.
-                    0
                 }
 
                 println("Git artifact profile: ${artifactProfile.name}")
                 println("Git extraction summary: status=${statusEntries.size}, diff=${diffEntries.size}")
-                println("Git duplicate overrides applied: $appliedOverrides")
+                println("Git selected revision files: ${diffSelection.revisionByPath.size}")
             }
 
             println("Extraction directory created: ${outputDir.absolutePath}")
         }
-
-        val doneMessage = """
-            Deployment extraction completed.
-            Path: $repoPath
-            Output: ${outputDir.absolutePath}
-            Time: ${SimpleDateFormat("yyyy/MM/dd HH:mm:ss").format(Date())}
-        """.trimIndent()
-
-        if (GraphicsEnvironment.isHeadless()) {
-            println(doneMessage)
-        } else {
-            JOptionPane.showMessageDialog(
-                null,
-                doneMessage,
-                "Done",
-                JOptionPane.INFORMATION_MESSAGE
-            )
-        }
+        GitUtil.notifyCompletionAndOpenDirectory(outputDir, "Git 배포 파일 생성이 완료되었습니다.")
     }
 
     private fun collectStatusPaths(git: Git, since: LocalDate, until: LocalDate): List<String> {
@@ -161,7 +152,7 @@ class GitInfoCli {
             .map { it.absolutePath }
     }
 
-    private fun collectDiffPaths(
+    private fun collectDiffSelection(
         repo: Repository,
         since: LocalDate,
         until: LocalDate,
@@ -170,7 +161,7 @@ class GitInfoCli {
         selectedVersions: List<String>,
         selectedFiles: List<String>,
         duplicateFileVersionMap: Map<String, String>
-    ): List<String> {
+    ): DiffSelection {
         val zone = ZoneId.systemDefault()
         return Git(repo).use { git ->
             val commits = resolveTargetCommits(git, sinceVersion, untilVersion, selectedVersions).filter { commit ->
@@ -184,12 +175,14 @@ class GitInfoCli {
                 .mapValues { it.value.trim() }
                 .filterValues { it.isNotEmpty() }
 
-            commits.flatMap { commit ->
+            val pathCandidates = linkedMapOf<String, MutableList<String>>()
+
+            commits.forEach { commit ->
                 val commitId = commit.name
                 repo.newObjectReader().use { reader ->
                     val parentTree = commit.parents.firstOrNull()?.let { parent ->
-                        CanonicalTreeParser().apply {
-                            reset(reader, repo.resolve("${parent.name}^{tree}"))
+                        repo.resolve("${parent.name}^{tree}")?.let { parentTreeId ->
+                            CanonicalTreeParser().apply { reset(reader, parentTreeId) }
                         }
                     }
                     val newTree = CanonicalTreeParser().apply {
@@ -205,49 +198,149 @@ class GitInfoCli {
                             normalizePath(path).takeUnless { it.isBlank() || it == DiffEntry.DEV_NULL }
                         }
                         .filter { path -> selectedFileSet.isEmpty() || path in selectedFileSet }
-                        .filter { path -> matchesDuplicateSelection(path, commitId, normalizedDuplicateMap) }
+                        .forEach { path ->
+                            pathCandidates.getOrPut(path) { mutableListOf() }.add(commitId)
+                        }
                 }
-            }.distinct()
+            }
+
+            val revisionByPath = linkedMapOf<String, String>()
+            pathCandidates.forEach { (path, revisions) ->
+                selectRevisionForPath(path, revisions, normalizedDuplicateMap)?.let { chosenRevision ->
+                    revisionByPath[path] = chosenRevision
+                }
+            }
+
+            DiffSelection(
+                paths = revisionByPath.keys.toList(),
+                revisionByPath = revisionByPath
+            )
+        }
+    }
+
+    private fun writeSelectedRevisionRawFiles(
+        outputDir: File,
+        repo: Repository,
+        revisionByPath: Map<String, String>
+    ): List<String> {
+        val writtenEntries = linkedSetOf<String>()
+
+        revisionByPath.forEach { (path, revisionText) ->
+            val revisionId = resolveRevisionByPrefix(repo, revisionText) ?: return@forEach
+            val fileBytes = readFileBytesAtRevision(repo, revisionId, path)
+            if (fileBytes == null) {
+                log.warn("Git revision file not found: revision={}, path={}", revisionText, path)
+                return@forEach
+            }
+
+            GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
+            writtenEntries.add(path)
+        }
+
+        return writtenEntries.toList()
+    }
+
+    private fun writeSelectedRevisionArtifacts(
+        outputDir: File,
+        repo: Repository,
+        revisionByPath: Map<String, String>,
+        jdkPath: String?
+    ): List<String> {
+        val writtenEntries = linkedSetOf<String>()
+
+        revisionByPath.entries
+            .groupBy({ it.value }, { it.key })
+            .forEach { (revisionText, paths) ->
+                val snapshotDir = Files.createTempDirectory("deploy-git-revision-").toFile()
+                try {
+                    materializeRevisionSnapshot(repo, revisionText, snapshotDir)
+
+                    val sourcePaths = paths.filter(::isJvmSourcePath)
+                    val rawPaths = paths.filterNot(::isJvmSourcePath)
+                    val resolvedRevisionId = resolveRevisionByPrefix(repo, revisionText)
+
+                    rawPaths.forEach { path ->
+                        val fileBytes = resolvedRevisionId?.let { readFileBytesAtRevision(repo, it, path) }
+                        if (fileBytes != null) {
+                            GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
+                            writtenEntries.add(path)
+                        }
+                    }
+
+                    if (sourcePaths.isNotEmpty()) {
+                        GitUtil.compileJvmProject(snapshotDir, jdkPath)
+                        GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+                        val mappedEntries = GitUtil.mapPathsForExtraction(sourcePaths, GitUtil.ArtifactProfile.JVM_CLASS_ONLY)
+                        val actualEntries = GitUtil.addZipEntryName(
+                            baseDir = snapshotDir,
+                            paths = mappedEntries,
+                            allowBuildArtifacts = true
+                        ).toList()
+                        GitUtil.addDirectoryEntry(
+                            targetDir = outputDir,
+                            baseDir = snapshotDir,
+                            paths = mappedEntries,
+                            allowBuildArtifacts = true
+                        )
+                        writtenEntries.addAll(actualEntries)
+                    }
+                } finally {
+                    snapshotDir.deleteRecursively()
+                }
+            }
+
+        return writtenEntries.toList()
+    }
+
+    private fun materializeRevisionSnapshot(repo: Repository, revisionText: String, targetDir: File) {
+        val revisionId = resolveRevisionByPrefix(repo, revisionText)
+            ?: error("Unable to resolve revision: $revisionText")
+
+        RevWalk(repo).use { revWalk ->
+            val commit = revWalk.parseCommit(revisionId)
+            TreeWalk(repo).use { treeWalk ->
+                treeWalk.addTree(commit.tree)
+                treeWalk.isRecursive = true
+
+                while (treeWalk.next()) {
+                    if (treeWalk.getFileMode(0).objectType != Constants.OBJ_BLOB) continue
+                    val outFile = File(targetDir, treeWalk.pathString.replace("/", File.separator))
+                    outFile.parentFile?.mkdirs()
+                    outFile.writeBytes(repo.open(treeWalk.getObjectId(0)).bytes)
+                }
+            }
         }
     }
 
     private fun normalizePath(path: String): String =
         path.replace("\\", "/").removePrefix("/").trim()
 
-    private fun matchesDuplicateSelection(
+    private fun selectRevisionForPath(
         path: String,
-        commitId: String,
+        revisions: List<String>,
         duplicateFileVersionMap: Map<String, String>
-    ): Boolean {
-        val selectedVersion = duplicateFileVersionMap[path] ?: return true
-        return commitId == selectedVersion || commitId.startsWith(selectedVersion)
-    }
+    ): String? {
+        val normalizedRevisions = revisions.distinct()
+        if (normalizedRevisions.isEmpty()) return null
 
-    private fun applyDuplicateVersionSelections(
-        outputDir: File,
-        repo: Repository,
-        duplicateFileVersionMap: Map<String, String>
-    ): Int {
-        var applied = 0
-
-        duplicateFileVersionMap.forEach { (path, revisionText) ->
-            val revision = resolveRevisionByPrefix(repo, revisionText) ?: return@forEach
-            val fileBytes = readFileBytesAtRevision(repo, revision, path) ?: return@forEach
-            GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
-            applied += 1
+        val selectedRevision = duplicateFileVersionMap[path]
+        if (!selectedRevision.isNullOrBlank()) {
+            normalizedRevisions.firstOrNull { revision ->
+                revision == selectedRevision ||
+                    revision.startsWith(selectedRevision, ignoreCase = true) ||
+                    selectedRevision.startsWith(revision, ignoreCase = true)
+            }?.let { return it }
         }
 
-        return applied
+        return normalizedRevisions.first()
     }
 
     private fun resolveRevisionByPrefix(repo: Repository, revisionText: String): ObjectId? {
         val trimmed = revisionText.trim()
         if (trimmed.isBlank()) return null
 
-        // 우선 일반 revision resolve를 시도한다.
         runCatching { repo.resolve(trimmed) }.getOrNull()?.let { return it }
 
-        // UI에서 짧은 commit hash가 전달된 경우를 위해 prefix 매칭 fallback을 둔다.
         return runCatching {
             Git(repo).use { git ->
                 git.log().call().firstOrNull { it.name.startsWith(trimmed, ignoreCase = true) }?.id
@@ -314,4 +407,7 @@ class GitInfoCli {
             else -> git.log().call().toList()
         }
     }
+
+    private fun isJvmSourcePath(path: String): Boolean =
+        path.endsWith(".kt", ignoreCase = true) || path.endsWith(".java", ignoreCase = true)
 }

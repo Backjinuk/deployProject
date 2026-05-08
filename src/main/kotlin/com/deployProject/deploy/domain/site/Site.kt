@@ -31,6 +31,9 @@ class Site {
     @Column(name = "local_path",  length = 255)
     var localPath: String? = null
 
+    @Column(name = "jdk_path", length = 255)
+    var jdkPath: String? = null
+
     @Column(name = "created_at", updatable = false)
     var createdAt: LocalDateTime? = LocalDateTime.now()
 

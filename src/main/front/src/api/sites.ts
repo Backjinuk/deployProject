@@ -3,6 +3,7 @@ export interface Site {
     text: string;
     homePath: string;
     localPath: string;
+    jdkPath?: string;
     userSeq?: number;
     useYn?: string;
     field?: string;

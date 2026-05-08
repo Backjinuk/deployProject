@@ -31,5 +31,7 @@ class ExtractionDto {
 
     var homePath : String  ?= null
 
+    var jdkPath : String ?= null
+
     var targetOs : TargetOsStatus ?= null
 }

@@ -19,6 +19,8 @@ open class SiteDto {
     /** 사용자의 로컬 디렉토리 경로 */
     var localPath: String? = null
 
+    var jdkPath: String? = null
+
     var field : String? = null
 
     var value: String? = null

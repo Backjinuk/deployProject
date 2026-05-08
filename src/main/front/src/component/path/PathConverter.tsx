@@ -12,13 +12,13 @@ interface Props {
     site: Site;
 }
 
-type RepoVersionOption = {
+export type RepoVersionOption = {
     value: string;
     label: string;
     committedAt: string;
 };
 
-type DuplicateFileItem = {
+export type DuplicateFileItem = {
     path: string;
     versions: RepoVersionOption[];
 };
@@ -72,6 +72,13 @@ const toLocalDateText = (date: Date): string => {
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
 
+const vcsTypeLabels: Record<string, string> = {
+    GIT: "Git",
+    SVN: "SVN",
+    LOCAL: "로컬(최종 수정 시간 기준)",
+    UNKNOWN: "알 수 없음",
+};
+
 const PathConverter: React.FC<Props> = ({ site }) => {
     const [startDate, setStartDate] = useState<Date | null>(null);
     const [endDate, setEndDate] = useState<Date | null>(null);
@@ -86,24 +93,25 @@ const PathConverter: React.FC<Props> = ({ site }) => {
 
     const [duplicateFiles, setDuplicateFiles] = useState<DuplicateFileItem[]>([]);
     const [duplicateFileVersionMap, setDuplicateFileVersionMap] = useState<Record<string, string>>({});
-    const [duplicateOnlySelected, setDuplicateOnlySelected] = useState(true);
     const [duplicateSearch, setDuplicateSearch] = useState("");
     const [bulkDuplicateVersion, setBulkDuplicateVersion] = useState("");
+    const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
 
     const [vcsType, setVcsType] = useState("");
     const [isExtracting, setIsExtracting] = useState(false);
 
-    const showDuplicatePanel = selectedVersions.length >= 2;
-    const duplicatePathSet = new Set(duplicateFiles.map((item) => item.path));
-    const normalizedDuplicateSearch = duplicateSearch.trim().toLowerCase();
-    const duplicateBulkVersionOptions = collectUniqueDuplicateVersions(duplicateFiles);
+    const isLocalMode = vcsType === "LOCAL";
+    const hasFileQuery = isLocalMode ? Boolean(startDate && endDate) : selectedVersions.length > 0;
+    const displayVcsType = vcsTypeLabels[vcsType] ?? vcsType;
 
-    const duplicateFilesByFilter = duplicateFiles.filter((item) => {
-        if (duplicateOnlySelected && !selectedFiles.includes(item.path)) return false;
+    const duplicatePathSet = new Set(duplicateFiles.map((item) => item.path));
+    const selectedDuplicateFiles = duplicateFiles.filter((item) => selectedFiles.includes(item.path));
+    const normalizedDuplicateSearch = duplicateSearch.trim().toLowerCase();
+    const duplicateBulkVersionOptions = collectUniqueDuplicateVersions(selectedDuplicateFiles);
+    const duplicateFilesByFilter = selectedDuplicateFiles.filter((item) => {
         if (normalizedDuplicateSearch && !item.path.toLowerCase().includes(normalizedDuplicateSearch)) return false;
         return true;
     });
-
     const unresolvedDuplicateCount = duplicateFilesByFilter.filter(
         (item) => !duplicateFileVersionMap[item.path]
     ).length;
@@ -118,6 +126,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             setDuplicateFileVersionMap({});
             setDuplicateSearch("");
             setBulkDuplicateVersion("");
+            setIsDuplicateModalOpen(false);
             setVcsType("");
             setIsLoadingVersions(false);
             return;
@@ -132,6 +141,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         setDuplicateFileVersionMap({});
         setDuplicateSearch("");
         setBulkDuplicateVersion("");
+        setIsDuplicateModalOpen(false);
 
         axios
             .post<RepoVersionListResponse>("/api/git/versions", {
@@ -152,7 +162,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                 Swal.fire({
                     icon: "error",
                     title: "버전 조회 실패",
-                    text: "저장소 경로 또는 권한을 확인해 주세요.",
+                    text: "저장소 경로와 권한을 확인해 주세요.",
                 }).then();
             })
             .finally(() => {
@@ -165,13 +175,17 @@ const PathConverter: React.FC<Props> = ({ site }) => {
     }, [site.localPath, startDate, endDate]);
 
     useEffect(() => {
-        if (!site.localPath || selectedVersions.length === 0) {
+        const shouldLoadLocalFiles = Boolean(site.localPath && startDate && endDate && isLocalMode);
+        const shouldLoadVersionFiles = Boolean(site.localPath && !isLocalMode && selectedVersions.length > 0);
+
+        if (!shouldLoadLocalFiles && !shouldLoadVersionFiles) {
             setVersionFiles([]);
             setSelectedFiles([]);
             setDuplicateFiles([]);
             setDuplicateFileVersionMap({});
             setDuplicateSearch("");
             setBulkDuplicateVersion("");
+            setIsDuplicateModalOpen(false);
             setIsLoadingFiles(false);
             return;
         }
@@ -183,6 +197,8 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             .post<RepoVersionFileListResponse>("/api/git/version-files", {
                 localPath: site.localPath,
                 selectedVersions,
+                since: startDate ? toLocalDateText(startDate) : null,
+                until: endDate ? toLocalDateText(endDate) : null,
             })
             .then((res) => {
                 if (cancelled) return;
@@ -222,10 +238,11 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                 setDuplicateFileVersionMap({});
                 setDuplicateSearch("");
                 setBulkDuplicateVersion("");
+                setIsDuplicateModalOpen(false);
                 Swal.fire({
                     icon: "error",
                     title: "파일 조회 실패",
-                    text: "선택한 버전의 변경 파일을 읽지 못했습니다.",
+                    text: "변경 파일 목록을 불러오지 못했습니다.",
                 }).then();
             })
             .finally(() => {
@@ -235,7 +252,43 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         return () => {
             cancelled = true;
         };
-    }, [site.localPath, selectedVersions]);
+    }, [site.localPath, selectedVersions, startDate, endDate, isLocalMode]);
+
+    useEffect(() => {
+        if (!isDuplicateModalOpen) return;
+
+        const previousOverflow = document.body.style.overflow;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setIsDuplicateModalOpen(false);
+            }
+        };
+
+        document.body.style.overflow = "hidden";
+        window.addEventListener("keydown", handleKeyDown);
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isDuplicateModalOpen]);
+
+    useEffect(() => {
+        if (isDuplicateModalOpen && selectedDuplicateFiles.length === 0) {
+            setIsDuplicateModalOpen(false);
+        }
+    }, [isDuplicateModalOpen, selectedDuplicateFiles.length]);
+
+    useEffect(() => {
+        if (duplicateBulkVersionOptions.length === 0) {
+            if (bulkDuplicateVersion) setBulkDuplicateVersion("");
+            return;
+        }
+
+        if (!duplicateBulkVersionOptions.some((option) => option.value === bulkDuplicateVersion)) {
+            setBulkDuplicateVersion(duplicateBulkVersionOptions[0].value);
+        }
+    }, [duplicateBulkVersionOptions, bulkDuplicateVersion]);
 
     const resolveTargetOs = (): "WINDOWS" | "MAC" | "LINUX" | null => {
         const ua = navigator.userAgent.toLowerCase();
@@ -245,7 +298,27 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         return null;
     };
 
-    const validateInputs = async (): Promise<boolean> => {
+    const requiresJvmCompilation = (): boolean =>
+        selectedFiles.some((file) => file.endsWith(".java") || file.endsWith(".kt"));
+
+    const confirmMissingJdkPath = async (): Promise<boolean> => {
+        if (!requiresJvmCompilation() || site.jdkPath?.trim()) return true;
+
+        const result = await Swal.fire({
+            icon: "warning",
+            title: "JDK 경로 미설정",
+            text: "Java/Kotlin 소스가 포함되어 있어 class 생성이 실패할 수 있습니다. 계속 진행할까요?",
+            showCancelButton: true,
+            confirmButtonText: "계속 진행",
+            cancelButtonText: "취소",
+        });
+
+        return result.isConfirmed;
+    };
+
+    const validateInputs = async (options?: { includeDuplicateVersions?: boolean }): Promise<boolean> => {
+        const includeDuplicateVersions = options?.includeDuplicateVersions ?? true;
+
         if (!startDate || !endDate) {
             await Swal.fire({
                 icon: "warning",
@@ -264,16 +337,16 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             return false;
         }
 
-        if (versionOptions.length === 0) {
+        if (!isLocalMode && versionOptions.length === 0) {
             await Swal.fire({
                 icon: "warning",
                 title: "버전 없음",
-                text: "선택한 날짜 범위에 버전이 없습니다.",
+                text: "선택한 날짜 범위에 해당하는 버전이 없습니다.",
             });
             return false;
         }
 
-        if (selectedVersions.length === 0) {
+        if (!isLocalMode && selectedVersions.length === 0) {
             await Swal.fire({
                 icon: "warning",
                 title: "버전 선택 필요",
@@ -291,15 +364,16 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             return false;
         }
 
-        const selectedDuplicateFiles = duplicateFiles.filter((item) => selectedFiles.includes(item.path));
-        const missingDuplicateVersion = selectedDuplicateFiles.find((item) => !duplicateFileVersionMap[item.path]);
-        if (missingDuplicateVersion) {
-            await Swal.fire({
-                icon: "warning",
-                title: "중복 파일 버전 선택 필요",
-                text: `중복 파일의 버전을 선택해 주세요: ${missingDuplicateVersion.path}`,
-            });
-            return false;
+        if (includeDuplicateVersions) {
+            const missingDuplicateVersion = selectedDuplicateFiles.find((item) => !duplicateFileVersionMap[item.path]);
+            if (missingDuplicateVersion) {
+                await Swal.fire({
+                    icon: "warning",
+                    title: "중복 파일 버전 선택 필요",
+                    text: `중복 파일의 버전을 선택해 주세요: ${missingDuplicateVersion.path}`,
+                });
+                return false;
+            }
         }
 
         return true;
@@ -340,9 +414,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         });
     };
 
-    const extraction = async () => {
-        if (!(await validateInputs())) return;
-
+    const performExtraction = async () => {
         const targetOs = resolveTargetOs();
         if (!targetOs) {
             await Swal.fire({
@@ -356,15 +428,16 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         setIsExtracting(true);
         Swal.fire({
             title: "패키지 생성 중",
-            text: "선택한 버전/파일 기준으로 패키지를 생성하고 있습니다.",
+            text: isLocalMode
+                ? "선택한 파일 기준으로 배포 패키지를 생성하고 있습니다."
+                : "선택한 버전과 파일 기준으로 배포 패키지를 생성하고 있습니다.",
             allowOutsideClick: false,
             didOpen: () => Swal.showLoading(),
         });
 
         try {
             const selectedDuplicateVersionMap = Object.fromEntries(
-                duplicateFiles
-                    .filter((item) => selectedFiles.includes(item.path))
+                selectedDuplicateFiles
                     .map((item) => [item.path, duplicateFileVersionMap[item.path]])
                     .filter((entry): entry is [string, string] => Boolean(entry[1]))
             );
@@ -377,7 +450,8 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     until: endDate ? toLocalDateText(endDate) : null,
                     localPath: site.localPath,
                     homePath: site.homePath,
-                    fileStatusType: "DIFF",
+                    jdkPath: site.jdkPath,
+                    fileStatusType: isLocalMode ? "STATUS" : "DIFF",
                     targetOs,
                     selectedVersions,
                     selectedFiles: selectedFiles.map(normalizePath),
@@ -423,74 +497,106 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         }
     };
 
-    return (
-        <div style={styles.customCard}>
-            <div style={styles.controlsRow}>
-                <DatePicker
-                    locale={ko}
-                    selected={startDate}
-                    onChange={(date) => setStartDate(date)}
-                    dateFormat="yyyy-MM-dd"
-                    customInput={<CustomInput />}
-                />
-                <span style={styles.separator}>~</span>
-                <DatePicker
-                    locale={ko}
-                    selected={endDate}
-                    onChange={(date) => setEndDate(date)}
-                    dateFormat="yyyy-MM-dd"
-                    customInput={<CustomInput />}
-                />
-            </div>
+    const closeDuplicateModal = () => {
+        if (isExtracting) return;
+        setIsDuplicateModalOpen(false);
+    };
 
-            <div style={styles.contentLayout}>
-                <div style={styles.leftLayout}>
-                    <div style={styles.selectionGrid}>
-                        <div style={styles.selectionPanel}>
-                            <div style={styles.panelHeader}>
-                                <label style={styles.panelTitle}>버전 선택</label>
-                                <div style={styles.panelTools}>
-                                    <button
-                                        type="button"
-                                        style={styles.toolBtn}
-                                        onClick={() => setSelectedVersions(versionOptions.map((item) => item.value))}
-                                        disabled={isLoadingVersions || versionOptions.length === 0}
-                                    >
-                                        전체 선택
-                                    </button>
-                                    <button
-                                        type="button"
-                                        style={styles.toolBtn}
-                                        onClick={() => setSelectedVersions([])}
-                                        disabled={isLoadingVersions || selectedVersions.length === 0}
-                                    >
-                                        전체 해제
-                                    </button>
+    const handleExtractClick = async () => {
+        if (!(await validateInputs({ includeDuplicateVersions: false }))) return;
+        if (!(await confirmMissingJdkPath())) return;
+
+        if (selectedDuplicateFiles.length > 0) {
+            setDuplicateSearch("");
+            setIsDuplicateModalOpen(true);
+            return;
+        }
+
+        await performExtraction();
+    };
+
+    const handleDuplicateConfirm = async () => {
+        if (!(await validateInputs())) return;
+        if (!(await confirmMissingJdkPath())) return;
+        setIsDuplicateModalOpen(false);
+        await performExtraction();
+    };
+
+    return (
+        <div style={styles.customCardSingle}>
+            <div style={styles.mainCard}>
+                <div style={styles.controlsRow}>
+                    <DatePicker
+                        locale={ko}
+                        selected={startDate}
+                        onChange={(date) => setStartDate(date)}
+                        dateFormat="yyyy-MM-dd"
+                        customInput={<CustomInput />}
+                    />
+                    <span style={styles.separator}>~</span>
+                    <DatePicker
+                        locale={ko}
+                        selected={endDate}
+                        onChange={(date) => setEndDate(date)}
+                        dateFormat="yyyy-MM-dd"
+                        customInput={<CustomInput />}
+                    />
+                </div>
+
+                <div style={styles.contentLayout}>
+                    <div
+                        style={{
+                            ...styles.selectionGrid,
+                            gridTemplateColumns: isLocalMode ? "minmax(0, 1fr)" : "repeat(2, minmax(0, 1fr))",
+                        }}
+                    >
+                        {!isLocalMode && (
+                            <div style={styles.selectionPanel}>
+                                <div style={styles.panelHeader}>
+                                    <label style={styles.panelTitle}>버전 선택</label>
+                                    <div style={styles.panelTools}>
+                                        <button
+                                            type="button"
+                                            style={styles.toolBtn}
+                                            onClick={() => setSelectedVersions(versionOptions.map((item) => item.value))}
+                                            disabled={isLoadingVersions || versionOptions.length === 0}
+                                        >
+                                            전체 선택
+                                        </button>
+                                        <button
+                                            type="button"
+                                            style={styles.toolBtn}
+                                            onClick={() => setSelectedVersions([])}
+                                            disabled={isLoadingVersions || selectedVersions.length === 0}
+                                        >
+                                            전체 해제
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div style={styles.checkListBox}>
+                                    {isLoadingVersions && <div style={styles.emptyText}>버전 목록을 불러오는 중입니다.</div>}
+                                    {!isLoadingVersions && versionOptions.length === 0 && (
+                                        <div style={styles.emptyText}>선택한 날짜 범위에 해당하는 버전이 없습니다.</div>
+                                    )}
+                                    {!isLoadingVersions &&
+                                        versionOptions.map((option) => (
+                                            <label
+                                                key={option.value}
+                                                style={selectedVersions.includes(option.value) ? styles.checkRowActive : styles.checkRow}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    style={styles.checkInput}
+                                                    checked={selectedVersions.includes(option.value)}
+                                                    onChange={() => toggleVersion(option.value)}
+                                                />
+                                                <span style={styles.checkText}>{option.label}</span>
+                                            </label>
+                                        ))}
                                 </div>
                             </div>
-
-                            <div style={styles.checkListBox}>
-                                {isLoadingVersions && <div style={styles.emptyText}>버전 목록을 불러오는 중입니다.</div>}
-                                {!isLoadingVersions && versionOptions.length === 0 && (
-                                    <div style={styles.emptyText}>선택한 날짜 범위에 버전이 없습니다.</div>
-                                )}
-                                {!isLoadingVersions &&
-                                    versionOptions.map((option) => (
-                                        <label
-                                            key={option.value}
-                                            style={selectedVersions.includes(option.value) ? styles.checkRowActive : styles.checkRow}
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                style={styles.checkInput}
-                                                checked={selectedVersions.includes(option.value)}
-                                                onChange={() => toggleVersion(option.value)}
-                                            />
-                                            <span style={styles.checkText}>{option.label}</span>
-                                        </label>
-                                    ))}
-                            </div>
-                        </div>
+                        )}
 
                         <div style={styles.selectionPanel}>
                             <div style={styles.panelHeader}>
@@ -516,16 +622,24 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                             </div>
 
                             <div style={styles.checkListBox}>
-                                {selectedVersions.length === 0 && (
-                                    <div style={styles.emptyText}>버전을 선택하면 변경 파일이 표시됩니다.</div>
+                                {!isLocalMode && selectedVersions.length === 0 && (
+                                    <div style={styles.emptyText}>버전을 선택하면 변경 파일을 표시합니다.</div>
                                 )}
-                                {selectedVersions.length > 0 && isLoadingFiles && (
-                                    <div style={styles.emptyText}>변경 파일 목록을 불러오는 중입니다.</div>
+                                {hasFileQuery && isLoadingFiles && (
+                                    <div style={styles.emptyText}>
+                                        {isLocalMode
+                                            ? "선택한 날짜 범위의 수정 파일을 불러오는 중입니다."
+                                            : "변경 파일 목록을 불러오는 중입니다."}
+                                    </div>
                                 )}
-                                {selectedVersions.length > 0 && !isLoadingFiles && versionFiles.length === 0 && (
-                                    <div style={styles.emptyText}>선택한 버전에 변경 파일이 없습니다.</div>
+                                {hasFileQuery && !isLoadingFiles && versionFiles.length === 0 && (
+                                    <div style={styles.emptyText}>
+                                        {isLocalMode
+                                            ? "선택한 날짜 범위에 해당하는 파일이 없습니다."
+                                            : "선택한 버전에 해당하는 변경 파일이 없습니다."}
+                                    </div>
                                 )}
-                                {selectedVersions.length > 0 &&
+                                {hasFileQuery &&
                                     !isLoadingFiles &&
                                     versionFiles.map((file) => (
                                         <label
@@ -547,129 +661,142 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     </div>
                 </div>
 
-                {showDuplicatePanel && (
-                    <div style={styles.rightLayout}>
-                        <div style={styles.duplicatePanel}>
-                            <div style={styles.panelHeader}>
-                                <div>
-                                    <div style={styles.panelTitle}>중복 파일 버전 선택</div>
-                                    <div style={styles.panelSubTitle}>
-                                        동일 파일이 여러 버전에 있을 때 기준 버전을 정합니다.
-                                    </div>
+                {vcsType && (
+                    <div style={styles.versionTypeText}>
+                        감지된 대상 유형: <strong>{displayVcsType}</strong>
+                    </div>
+                )}
+
+                <button
+                    onClick={handleExtractClick}
+                    style={styles.extractBtn}
+                    disabled={isExtracting || isLoadingVersions || isLoadingFiles}
+                >
+                    {isExtracting ? "생성 중..." : "패키지 추출"}
+                </button>
+            </div>
+
+            {isDuplicateModalOpen && (
+                <div style={styles.duplicateModalOverlay} onClick={closeDuplicateModal}>
+                    <div style={styles.duplicateModalDialog} onClick={(event) => event.stopPropagation()}>
+                        <div style={styles.panelHeader}>
+                            <div>
+                                <div style={styles.panelTitle}>중복 파일 버전 선택</div>
+                                <div style={styles.panelSubTitle}>
+                                    같은 파일 경로가 여러 버전에 포함되어 있어 사용할 버전을 선택해야 합니다.
                                 </div>
-                                <span style={styles.summaryChip}>총 {duplicateFiles.length}건</span>
                             </div>
+                            <div style={styles.duplicateModalHeaderActions}>
+                                <span style={styles.summaryChip}>총 {selectedDuplicateFiles.length}건</span>
+                                <button type="button" style={styles.duplicateCloseBtn} onClick={closeDuplicateModal}>
+                                    닫기
+                                </button>
+                            </div>
+                        </div>
 
-                            {duplicateFiles.length === 0 && (
-                                <div style={styles.emptyText}>선택한 버전에 중복 파일이 없습니다.</div>
+                        <div style={styles.duplicateToolbar}>
+                            <input
+                                type="text"
+                                value={duplicateSearch}
+                                onChange={(event) => setDuplicateSearch(event.target.value)}
+                                placeholder="파일 경로 검색"
+                                style={styles.duplicateSearchInput}
+                            />
+                            <select
+                                style={styles.duplicateBulkSelect}
+                                value={bulkDuplicateVersion}
+                                onChange={(event) => setBulkDuplicateVersion(event.target.value)}
+                                disabled={duplicateBulkVersionOptions.length === 0}
+                            >
+                                {duplicateBulkVersionOptions.length === 0 && <option value="">선택 가능한 버전 없음</option>}
+                                {duplicateBulkVersionOptions.map((version) => (
+                                    <option key={`bulk-${version.value}`} value={version.value}>
+                                        {version.label}
+                                    </option>
+                                ))}
+                            </select>
+
+                            <div style={styles.duplicateButtonRow}>
+                                <button
+                                    type="button"
+                                    style={{ ...styles.toolBtn, ...styles.duplicateToolbarButton }}
+                                    onClick={applyBulkDuplicateVersion}
+                                    disabled={duplicateFilesByFilter.length === 0 || !bulkDuplicateVersion}
+                                >
+                                    필터 적용
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{ ...styles.toolBtn, ...styles.duplicateToolbarButton }}
+                                    onClick={applyRecommendedDuplicateVersion}
+                                    disabled={duplicateFilesByFilter.length === 0}
+                                >
+                                    추천 적용
+                                </button>
+                            </div>
+                        </div>
+
+                        <div style={styles.duplicateMetaText}>
+                            총 {selectedDuplicateFiles.length}건 / 표시 {duplicateFilesByFilter.length}건
+                            {unresolvedDuplicateCount > 0 && (
+                                <span style={styles.duplicateUnresolved}> / 미선택 {unresolvedDuplicateCount}건</span>
                             )}
+                        </div>
 
-                            {duplicateFiles.length > 0 && (
-                                <>
-                                    <div style={styles.duplicateToolbar}>
-                                        <label style={styles.duplicateFilterCheck}>
-                                            <input
-                                                type="checkbox"
-                                                checked={duplicateOnlySelected}
-                                                onChange={(event) => setDuplicateOnlySelected(event.target.checked)}
-                                            />
-                                            <span>선택 파일만 표시</span>
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={duplicateSearch}
-                                            onChange={(event) => setDuplicateSearch(event.target.value)}
-                                            placeholder="파일 경로 검색"
-                                            style={styles.duplicateSearchInput}
-                                        />
+                        {selectedDuplicateFiles.length === 0 && (
+                            <div style={styles.emptyText}>선택한 파일에는 중복 항목이 없습니다.</div>
+                        )}
+
+                        {selectedDuplicateFiles.length > 0 && duplicateFilesByFilter.length === 0 && (
+                            <div style={styles.emptyText}>현재 검색 조건에 맞는 중복 파일이 없습니다.</div>
+                        )}
+
+                        {selectedDuplicateFiles.length > 0 && duplicateFilesByFilter.length > 0 && (
+                            <div style={styles.duplicateListBox}>
+                                {duplicateFilesByFilter.map((item, idx) => (
+                                    <div key={item.path} style={styles.duplicateRow}>
+                                        <div style={styles.duplicatePathWrap}>
+                                            <span style={styles.duplicateIndex}>{idx + 1}</span>
+                                            <span style={styles.duplicatePath}>{item.path}</span>
+                                        </div>
                                         <select
-                                            style={styles.duplicateBulkSelect}
-                                            value={bulkDuplicateVersion}
-                                            onChange={(event) => setBulkDuplicateVersion(event.target.value)}
+                                            style={styles.duplicateSelect}
+                                            value={duplicateFileVersionMap[item.path] ?? ""}
+                                            onChange={(event) =>
+                                                setDuplicateFileVersionMap((prev) => ({
+                                                    ...prev,
+                                                    [item.path]: event.target.value,
+                                                }))
+                                            }
                                         >
-                                            {duplicateBulkVersionOptions.map((version) => (
-                                                <option key={`bulk-${version.value}`} value={version.value}>
+                                            {item.versions.length === 0 && <option value="">선택 가능한 버전 없음</option>}
+                                            {item.versions.map((version) => (
+                                                <option key={`${item.path}-${version.value}`} value={version.value}>
                                                     {version.label}
                                                 </option>
                                             ))}
                                         </select>
-                                        <button
-                                            type="button"
-                                            style={styles.toolBtn}
-                                            onClick={applyBulkDuplicateVersion}
-                                            disabled={duplicateFilesByFilter.length === 0 || !bulkDuplicateVersion}
-                                        >
-                                            필터 대상 적용
-                                        </button>
-                                        <button
-                                            type="button"
-                                            style={styles.toolBtn}
-                                            onClick={applyRecommendedDuplicateVersion}
-                                            disabled={duplicateFilesByFilter.length === 0}
-                                        >
-                                            추천값 적용
-                                        </button>
                                     </div>
+                                ))}
+                            </div>
+                        )}
 
-                                    <div style={styles.duplicateMetaText}>
-                                        표시 {duplicateFilesByFilter.length}건
-                                        {unresolvedDuplicateCount > 0 && (
-                                            <span style={styles.duplicateUnresolved}> / 미선택 {unresolvedDuplicateCount}건</span>
-                                        )}
-                                    </div>
-
-                                    {duplicateFilesByFilter.length === 0 && (
-                                        <div style={styles.emptyText}>현재 필터에 맞는 중복 파일이 없습니다.</div>
-                                    )}
-
-                                    {duplicateFilesByFilter.length > 0 && (
-                                        <div style={styles.duplicateListBox}>
-                                            {duplicateFilesByFilter.map((item, idx) => (
-                                                <div key={item.path} style={styles.duplicateRow}>
-                                                    <div style={styles.duplicatePathWrap}>
-                                                        <span style={styles.duplicateIndex}>{idx + 1}</span>
-                                                        <span style={styles.duplicatePath}>{item.path}</span>
-                                                    </div>
-                                                    <select
-                                                        style={styles.duplicateSelect}
-                                                        value={duplicateFileVersionMap[item.path] ?? ""}
-                                                        onChange={(event) =>
-                                                            setDuplicateFileVersionMap((prev) => ({
-                                                                ...prev,
-                                                                [item.path]: event.target.value,
-                                                            }))
-                                                        }
-                                                    >
-                                                        {item.versions.map((version) => (
-                                                            <option key={`${item.path}-${version.value}`} value={version.value}>
-                                                                {version.label}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </>
-                            )}
+                        <div style={styles.modalFooter}>
+                            <button type="button" style={styles.modalSecondaryButton} onClick={closeDuplicateModal}>
+                                취소
+                            </button>
+                            <button
+                                type="button"
+                                style={styles.modalPrimaryButton}
+                                onClick={handleDuplicateConfirm}
+                                disabled={isExtracting}
+                            >
+                                이 버전으로 추출
+                            </button>
                         </div>
                     </div>
-                )}
-            </div>
-
-            {vcsType && (
-                <div style={styles.versionTypeText}>
-                    감지된 저장소 유형: <strong>{vcsType}</strong>
                 </div>
             )}
-
-            <button
-                onClick={extraction}
-                style={styles.extractBtn}
-                disabled={isExtracting || isLoadingVersions || isLoadingFiles}
-            >
-                {isExtracting ? "생성 중..." : "패키지 추출"}
-            </button>
         </div>
     );
 };

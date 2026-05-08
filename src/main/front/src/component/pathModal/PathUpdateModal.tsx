@@ -2,8 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import Swal from "sweetalert2";
 import { Site } from "../../api/sites";
+import { selectDirectory } from "../../api/directoryPicker";
 
-type EditableField = "text" | "homePath" | "localPath";
+type EditableField = "text" | "homePath" | "localPath" | "jdkPath";
+
+const fieldDefinitions: Array<{ key: EditableField; label: string; canBrowse?: boolean }> = [
+    { key: "text", label: "사이트 이름" },
+    { key: "homePath", label: "배포 서버 경로" },
+    { key: "localPath", label: "로컬 프로젝트 경로", canBrowse: true },
+    { key: "jdkPath", label: "JDK 경로", canBrowse: true },
+];
 
 export default function PathUpdateModal({
     show,
@@ -44,11 +52,25 @@ export default function PathUpdateModal({
     };
 
     const commitFieldUpdate = (id: number, field: EditableField, value: string) => {
-        // 수정 이유: 기존 구현은 key 입력마다 API를 호출해 불필요한 요청이 과도하게 발생했다.
-        // 로컬 상태는 즉시 반영하고, 서버 반영은 blur 시점에만 수행한다.
         axios.post("/api/updatePath", { id, field, value }).catch((err) => {
             console.error("updatePath failed", err);
         });
+    };
+
+    const handleBrowse = async (pathId: number, field: EditableField, currentValue: string, label: string) => {
+        try {
+            const selectedPath = await selectDirectory(currentValue, label);
+            if (!selectedPath) return;
+            updateFieldLocal(pathId, field, selectedPath);
+            commitFieldUpdate(pathId, field, selectedPath);
+        } catch (error) {
+            console.error("directory picker failed", error);
+            await Swal.fire({
+                icon: "error",
+                title: "경로 선택 실패",
+                text: "탐색기를 열지 못했습니다.",
+            });
+        }
     };
 
     const deletePath = async (id: number) => {
@@ -60,6 +82,57 @@ export default function PathUpdateModal({
             timer: 1200,
             showConfirmButton: false,
         });
+    };
+
+    const renderField = (path: Site, key: EditableField, label: string, canBrowse?: boolean) => {
+        if (canBrowse && path.id != null) {
+            const currentValue = ((path[key] as string) || "").trim();
+
+            return (
+                <div className="input-group mb-3" key={key}>
+                    <span className="input-group-text">{label}</span>
+                    <input
+                        type="text"
+                        className="form-control"
+                        id={`${key}-${path.id}`}
+                        placeholder="선택된 경로가 없습니다."
+                        value={currentValue}
+                        readOnly
+                        onClick={() => handleBrowse(path.id as number, key, currentValue, label)}
+                        style={{ cursor: "pointer", backgroundColor: "#ffffff" }}
+                    />
+                    <button
+                        type="button"
+                        className="btn btn-outline-secondary"
+                        onClick={() => handleBrowse(path.id as number, key, currentValue, label)}
+                    >
+                        폴더 선택
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div className="input-group mb-3" key={key}>
+                <span className="input-group-text">{label}</span>
+                <div className="form-floating flex-grow-1">
+                    <input
+                        type="text"
+                        className="form-control"
+                        id={`${key}-${path.id}`}
+                        placeholder={label}
+                        value={(path[key] as string) || ""}
+                        onChange={(e) =>
+                            path.id != null && updateFieldLocal(path.id, key, e.currentTarget.value)
+                        }
+                        onBlur={(e) =>
+                            path.id != null && commitFieldUpdate(path.id, key, e.currentTarget.value)
+                        }
+                    />
+                    <label htmlFor={`${key}-${path.id}`}>{label}</label>
+                </div>
+            </div>
+        );
     };
 
     return (
@@ -113,35 +186,9 @@ export default function PathUpdateModal({
                                     }}
                                 >
                                     <div style={{ padding: "0.9rem 1rem", backgroundColor: "#f8fbff" }}>
-                                        {(
-                                            [
-                                                { key: "text", label: "사이트 이름" },
-                                                { key: "homePath", label: "배포 서버 경로" },
-                                                { key: "localPath", label: "로컬 프로젝트 경로" },
-                                            ] as const
-                                        ).map(({ key, label }) => (
-                                            <div className="input-group mb-3" key={key}>
-                                                <span className="input-group-text">{label}</span>
-                                                <div className="form-floating flex-grow-1">
-                                                    <input
-                                                        type="text"
-                                                        className="form-control"
-                                                        id={`${key}-${path.id}`}
-                                                        placeholder={label}
-                                                        value={(path[key] as string) || ""}
-                                                        onChange={(e) =>
-                                                            path.id != null &&
-                                                            updateFieldLocal(path.id, key, e.currentTarget.value)
-                                                        }
-                                                        onBlur={(e) =>
-                                                            path.id != null &&
-                                                            commitFieldUpdate(path.id, key, e.currentTarget.value)
-                                                        }
-                                                    />
-                                                    <label htmlFor={`${key}-${path.id}`}>{label}</label>
-                                                </div>
-                                            </div>
-                                        ))}
+                                        {fieldDefinitions.map(({ key, label, canBrowse }) =>
+                                            renderField(path, key, label, canBrowse)
+                                        )}
                                     </div>
                                 </div>
                             </div>

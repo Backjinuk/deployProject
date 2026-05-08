@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import Swal from "sweetalert2";
+import { selectDirectory } from "../../api/directoryPicker";
 
 type PathForm = {
     text: string;
     homePath: string;
     localPath: string;
+    jdkPath: string;
     userSeq: number | "";
 };
+
+type PathFieldKey = Exclude<keyof PathForm, "userSeq">;
+
+const fieldDefinitions: Array<{ key: PathFieldKey; label: string; canBrowse?: boolean }> = [
+    { key: "text", label: "사이트 이름" },
+    { key: "homePath", label: "배포 서버 경로" },
+    { key: "localPath", label: "로컬 프로젝트 경로", canBrowse: true },
+    { key: "jdkPath", label: "JDK 경로", canBrowse: true },
+];
 
 export default function PathAddModal({
     show,
@@ -22,6 +33,7 @@ export default function PathAddModal({
         text: "",
         homePath: "",
         localPath: "",
+        jdkPath: "",
         userSeq: JSON.parse(localStorage.getItem("deployUser") || "{}").id || "",
     });
 
@@ -49,12 +61,71 @@ export default function PathAddModal({
         };
     }, [show, onPathAdd]);
 
+    const handleBrowse = async (key: PathFieldKey, label: string) => {
+        try {
+            const selectedPath = await selectDirectory(form[key], label);
+            if (!selectedPath) return;
+            setForm((prev) => ({ ...prev, [key]: selectedPath }));
+        } catch (error) {
+            console.error("directory picker failed", error);
+            await Swal.fire({
+                icon: "error",
+                title: "경로 선택 실패",
+                text: "탐색기를 열지 못했습니다.",
+            });
+        }
+    };
+
+    const renderField = (key: PathFieldKey, label: string, canBrowse?: boolean) => {
+        if (canBrowse) {
+            return (
+                <div className="input-group mb-3" key={key}>
+                    <span className="input-group-text">{label}</span>
+                    <input
+                        type="text"
+                        className="form-control"
+                        id={key}
+                        placeholder="선택된 경로가 없습니다."
+                        value={form[key]}
+                        readOnly
+                        onClick={() => handleBrowse(key, label)}
+                        style={{ cursor: "pointer", backgroundColor: "#ffffff" }}
+                    />
+                    <button
+                        type="button"
+                        className="btn btn-outline-secondary"
+                        onClick={() => handleBrowse(key, label)}
+                    >
+                        폴더 선택
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div className="input-group mb-3" key={key}>
+                <span className="input-group-text">{label}</span>
+                <div className="form-floating flex-grow-1">
+                    <input
+                        type="text"
+                        className="form-control"
+                        id={key}
+                        placeholder={label}
+                        value={form[key]}
+                        onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                    />
+                    <label htmlFor={key}>{label}</label>
+                </div>
+            </div>
+        );
+    };
+
     const savePath = async () => {
         if (!form.text.trim() || !form.homePath.trim() || !form.localPath.trim()) {
             await Swal.fire({
                 icon: "warning",
                 title: "입력 확인",
-                text: "모든 항목을 입력해 주세요.",
+                text: "필수 항목을 모두 입력해 주세요.",
             });
             return;
         }
@@ -68,7 +139,6 @@ export default function PathAddModal({
             showConfirmButton: false,
         });
 
-        // 수정 이유: 기존 구현은 state 객체를 직접 변경해서 리렌더링이 보장되지 않았다.
         setForm(createInitialForm());
         onPathAdd();
     };
@@ -85,28 +155,7 @@ export default function PathAddModal({
                     </div>
 
                     <div className="modal-body">
-                        {(
-                            [
-                                { key: "text", label: "사이트 이름" },
-                                { key: "homePath", label: "배포 서버 경로" },
-                                { key: "localPath", label: "로컬 프로젝트 경로" },
-                            ] as const
-                        ).map(({ key, label }) => (
-                            <div className="input-group mb-3" key={key}>
-                                <span className="input-group-text">{label}</span>
-                                <div className="form-floating flex-grow-1">
-                                    <input
-                                        type="text"
-                                        className="form-control"
-                                        id={key}
-                                        placeholder={label}
-                                        value={form[key]}
-                                        onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                                    />
-                                    <label htmlFor={key}>{label}</label>
-                                </div>
-                            </div>
-                        ))}
+                        {fieldDefinitions.map(({ key, label, canBrowse }) => renderField(key, label, canBrowse))}
                     </div>
 
                     <div className="modal-footer">

@@ -83,6 +83,7 @@ class DeployRepositoryImpl(
             site.text?.let { add("s.text      = :text") }
             site.homePath?.let { add("s.homePath  = :homePath") }
             site.localPath?.let { add("s.localPath = :localPath") }
+            site.jdkPath?.let { add("s.jdkPath = :jdkPath") }
             site.useYn?.let { add("s.useYn = :useYn") }
         }
 
@@ -102,6 +103,7 @@ class DeployRepositoryImpl(
         site.text?.let { query.setParameter("text", it) }
         site.homePath?.let { query.setParameter("homePath", it) }
         site.localPath?.let { query.setParameter("localPath", it) }
+        site.jdkPath?.let { query.setParameter("jdkPath", it) }
         site.useYn?.let { query.setParameter("useYn", it) }
 
         // 5) 쿼리 실행

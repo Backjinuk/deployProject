@@ -2,26 +2,35 @@ package com.deployProject.cli.infoCli
 
 import com.deployProject.cli.DeployCliScript
 import com.deployProject.cli.utilCli.GitUtil
-import com.deployProject.cli.utilCli.GitUtil.addZipEntryName
 import com.deployProject.cli.utilCli.GitUtil.allowsDiff
 import com.deployProject.cli.utilCli.GitUtil.allowsStatus
 import com.deployProject.deploy.domain.site.FileStatusType
 import org.slf4j.LoggerFactory
+import org.tmatesoft.svn.core.SVNDepth
 import org.tmatesoft.svn.core.SVNException
+import org.tmatesoft.svn.core.SVNURL
 import org.tmatesoft.svn.core.wc.SVNClientManager
 import org.tmatesoft.svn.core.wc.SVNRevision
 import org.tmatesoft.svn.core.wc.SVNStatusType
 import org.tmatesoft.svn.core.wc.SVNWCUtil
-import java.awt.GraphicsEnvironment
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.file.Files
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Date
-import javax.swing.JOptionPane
 
 class SvnInfoCli {
     private val log = LoggerFactory.getLogger(SvnInfoCli::class.java)
+
+    private data class DiffSelection(
+        val paths: List<String>,
+        val revisionByPath: Map<String, String>
+    ) {
+        companion object {
+            val EMPTY = DiffSelection(emptyList(), emptyMap())
+        }
+    }
 
     fun svnCliExecution(
         repoPath: String,
@@ -29,6 +38,7 @@ class SvnInfoCli {
         until: Date,
         fileStatusType: FileStatusType,
         deployServerDir: String,
+        jdkPath: String?,
         sinceVersion: String?,
         untilVersion: String?,
         selectedVersions: List<String>,
@@ -42,16 +52,20 @@ class SvnInfoCli {
         val artifactProfile = GitUtil.resolveArtifactProfile(workTree)
         val allowBuildArtifacts = GitUtil.profileUsesBuildArtifacts(artifactProfile)
 
-        GitUtil.showProgressAndRun(title = "SVN Processing", initialMessage = "SVN extraction started") {
+        GitUtil.showProgressAndRun(
+            title = "배포 파일 생성",
+            initialMessage = "SVN 변경 파일을 정리하고 있습니다.",
+            detailMessage = "선택한 리비전 기준 파일 수집, 클래스 생성, 패치 스크립트 생성을 진행합니다."
+        ) {
             val statusPaths = if (fileStatusType.allowsStatus()) {
-                collectStatusPaths(svnDir.path, since, until)
+                collectStatusPaths(workTree.path, since, until)
             } else {
                 emptyList()
             }
 
-            val diffPaths = if (fileStatusType.allowsDiff()) {
-                collectDiffPaths(
-                    root = svnDir.path,
+            val diffSelection = if (fileStatusType.allowsDiff()) {
+                collectDiffSelection(
+                    root = workTree.path,
                     start = since,
                     end = until,
                     sinceVersion = sinceVersion,
@@ -62,78 +76,59 @@ class SvnInfoCli {
                     workTreeName = workTreeName
                 )
             } else {
-                emptyList()
+                DiffSelection.EMPTY
             }
 
-            GitUtil.buildLatestClassMap(workTree, statusPaths + diffPaths)
             val statusEntries = if (statusPaths.isEmpty()) {
                 emptyList()
             } else {
-                GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
+                if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY && statusPaths.any(::isJvmSourcePath)) {
+                    GitUtil.compileJvmProject(workTree, jdkPath)
+                }
+                GitUtil.buildLatestClassMap(workTree, statusPaths)
+                GitUtil.normalizeExtractionPaths(
+                    workTree,
+                    GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
+                )
             }
-            val diffEntries = if (diffPaths.isEmpty()) {
+
+            val diffEntries = if (diffSelection.paths.isEmpty()) {
                 emptyList()
             } else {
-                GitUtil.mapPathsForExtraction(diffPaths, artifactProfile)
+                when (artifactProfile) {
+                    GitUtil.ArtifactProfile.RAW_FILE_COPY ->
+                        writeSelectedRevisionRawFiles(outputDir, workTree, diffSelection.revisionByPath)
+                    GitUtil.ArtifactProfile.JVM_CLASS_ONLY ->
+                        writeSelectedRevisionArtifacts(outputDir, workTree, diffSelection.revisionByPath, jdkPath)
+                }
             }
+
             if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY) {
-                val changedSourceCount = (statusPaths + diffPaths).count {
-                    it.endsWith(".java", ignoreCase = true) || it.endsWith(".kt", ignoreCase = true)
-                }
+                val changedSourceCount = (statusPaths + diffSelection.paths).count(::isJvmSourcePath)
                 val classEntryCount = (statusEntries + diffEntries).count { it.endsWith(".class", ignoreCase = true) }
-                // Modified because class-only mode can look empty when compiled outputs are missing.
                 if (changedSourceCount > 0 && classEntryCount == 0) {
-                    log.warn("No class artifacts found. Build the project before extraction.")
+                    log.warn("No class artifacts found for selected SVN revisions.")
                 }
             }
-            val entries = addZipEntryName(
-                baseDir = workTree,
-                paths = statusEntries + diffEntries,
-                allowBuildArtifacts = allowBuildArtifacts
-            ).toList()
 
-            // 수정 이유: exe 실행 시 zip 대신 바탕화면 디렉토리 결과물을 바로 확인할 수 있도록 변경한다.
             if (fileStatusType.allowsStatus()) {
-                GitUtil.addDirectoryEntry(outputDir, workTree, statusEntries, allowBuildArtifacts)
-            }
-            if (fileStatusType.allowsDiff()) {
-                GitUtil.addDirectoryEntry(outputDir, workTree, diffEntries, allowBuildArtifacts)
+                val selectedDiffEntrySet = diffEntries.toSet()
+                val statusEntriesToCopy = statusEntries.filterNot { it in selectedDiffEntrySet }
+                GitUtil.addDirectoryEntry(outputDir, workTree, statusEntriesToCopy, allowBuildArtifacts)
             }
 
+            val entries = (statusEntries + diffEntries).distinct()
             DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
                 GitUtil.writeTextOutputFile(outputDir, name, lines.joinToString("\n"))
-            }
-
-            // 수정 이유: 중복 파일에서 선택한 SVN 리비전의 실제 파일 내용을 결과물에 반영한다.
-            val appliedOverrides = if (artifactProfile == GitUtil.ArtifactProfile.RAW_FILE_COPY) {
-                val duplicateSelections = duplicateFileVersionMap
-                    .mapKeys { normalizePath(it.key, workTreeName) }
-                    .mapValues { it.value.trim() }
-                    .filter { (path, version) -> path.isNotEmpty() && version.isNotEmpty() }
-                applyDuplicateVersionSelections(outputDir, workTree, duplicateSelections, workTreeName)
-            } else {
-                // Modified because class-only extraction cannot override source text blobs reliably.
-                0
             }
 
             log.info("Created output directory: {}", outputDir.absolutePath)
             println("SVN artifact profile: ${artifactProfile.name}")
             println("SVN extraction summary: status=${statusEntries.size}, diff=${diffEntries.size}, total=${entries.size}")
-            println("SVN duplicate overrides applied: $appliedOverrides")
+            println("SVN selected revision files: ${diffSelection.revisionByPath.size}")
             println("Extraction directory created: ${outputDir.absolutePath}")
         }
-
-        val doneMessage = "Extraction completed.\nOutput: ${outputDir.absolutePath}"
-        if (GraphicsEnvironment.isHeadless()) {
-            println(doneMessage)
-        } else {
-            JOptionPane.showMessageDialog(
-                null,
-                doneMessage,
-                "Done",
-                JOptionPane.INFORMATION_MESSAGE
-            )
-        }
+        GitUtil.notifyCompletionAndOpenDirectory(outputDir, "SVN 배포 파일 생성이 완료되었습니다.")
     }
 
     private fun collectStatusPaths(root: String, since: Date, until: Date): List<String> {
@@ -152,10 +147,10 @@ class SvnInfoCli {
                 )
             ) {
                 val file = status.file
-                val date = Instant.ofEpochMilli(file.lastModified()).atZone(zone).toLocalDate()
+                val fileDate = Instant.ofEpochMilli(file.lastModified()).atZone(zone).toLocalDate()
                 val sinceDate = since.toInstant().atZone(zone).toLocalDate()
                 val untilDate = until.toInstant().atZone(zone).toLocalDate()
-                if (!date.isBefore(sinceDate) && !date.isAfter(untilDate)) {
+                if (!fileDate.isBefore(sinceDate) && !fileDate.isAfter(untilDate)) {
                     files.add(file.absolutePath)
                 }
             }
@@ -163,7 +158,7 @@ class SvnInfoCli {
         return files
     }
 
-    private fun collectDiffPaths(
+    private fun collectDiffSelection(
         root: String,
         start: Date,
         end: Date,
@@ -173,14 +168,14 @@ class SvnInfoCli {
         selectedFiles: List<String>,
         duplicateFileVersionMap: Map<String, String>,
         workTreeName: String
-    ): List<String> {
+    ): DiffSelection {
         val client = createClientManagerWithCachedAuth()
-        val paths = linkedSetOf<String>()
         val selectedFileSet = selectedFiles.map { normalizePath(it, workTreeName) }.toSet()
         val normalizedDuplicateMap = duplicateFileVersionMap
             .mapKeys { normalizePath(it.key, workTreeName) }
             .mapValues { it.value.trim() }
             .filterValues { it.isNotEmpty() }
+        val pathCandidates = linkedMapOf<String, MutableList<String>>()
 
         try {
             if (selectedVersions.isNotEmpty()) {
@@ -189,12 +184,9 @@ class SvnInfoCli {
                     val rev = SVNRevision.create(revision)
                     client.logClient.doLog(arrayOf(File(root)), rev, rev, false, true, 1L) { logEntry ->
                         logEntry.changedPaths.values.forEach { change ->
-                            val normalized = normalizePath(change.path.orEmpty(), workTreeName)
-                            val forcedRevision = normalizedDuplicateMap[normalized]
-                            val isSelectedFile = selectedFileSet.isEmpty() || normalized in selectedFileSet
-                            val matchesRevision = forcedRevision == null || forcedRevision == revisionId
-                            if (normalized.isNotBlank() && isSelectedFile && matchesRevision) {
-                                paths.add(normalized)
+                            val path = normalizePath(change.path.orEmpty(), workTreeName)
+                            if (path.isNotBlank() && (selectedFileSet.isEmpty() || path in selectedFileSet)) {
+                                pathCandidates.getOrPut(path) { mutableListOf() }.add(revisionId)
                             }
                         }
                     }
@@ -207,12 +199,9 @@ class SvnInfoCli {
                 client.logClient.doLog(arrayOf(File(root)), normalizedStart, normalizedEnd, false, true, 0L) { logEntry ->
                     val entryRevision = logEntry.revision.toString()
                     logEntry.changedPaths.values.forEach { change ->
-                        val normalized = normalizePath(change.path.orEmpty(), workTreeName)
-                        val forcedRevision = normalizedDuplicateMap[normalized]
-                        val isSelectedFile = selectedFileSet.isEmpty() || normalized in selectedFileSet
-                        val matchesRevision = forcedRevision == null || forcedRevision == entryRevision
-                        if (normalized.isNotBlank() && isSelectedFile && matchesRevision) {
-                            paths.add(normalized)
+                        val path = normalizePath(change.path.orEmpty(), workTreeName)
+                        if (path.isNotBlank() && (selectedFileSet.isEmpty() || path in selectedFileSet)) {
+                            pathCandidates.getOrPut(path) { mutableListOf() }.add(entryRevision)
                         }
                     }
                 }
@@ -221,7 +210,17 @@ class SvnInfoCli {
             log.info("SVN log collection failed: {}", e.message)
         }
 
-        return paths.toList()
+        val revisionByPath = linkedMapOf<String, String>()
+        pathCandidates.forEach { (path, revisions) ->
+            selectRevisionForPath(path, revisions, normalizedDuplicateMap)?.let { chosenRevision ->
+                revisionByPath[path] = chosenRevision
+            }
+        }
+
+        return DiffSelection(
+            paths = revisionByPath.keys.toList(),
+            revisionByPath = revisionByPath
+        )
     }
 
     private fun parseSvnRevisionOrDate(version: String?, date: Date): SVNRevision {
@@ -244,39 +243,144 @@ class SvnInfoCli {
         return normalized.removePrefix("./")
     }
 
-    private fun applyDuplicateVersionSelections(
-        outputDir: File,
-        workTree: File,
-        duplicateFileVersionMap: Map<String, String>,
-        workTreeName: String
-    ): Int {
-        val client = createClientManagerWithCachedAuth()
-        var applied = 0
+    private fun selectRevisionForPath(
+        path: String,
+        revisions: List<String>,
+        duplicateFileVersionMap: Map<String, String>
+    ): String? {
+        val normalizedRevisions = revisions.distinct()
+        if (normalizedRevisions.isEmpty()) return null
 
-        duplicateFileVersionMap.forEach { (path, revisionText) ->
-            val revisionNo = revisionText.toLongOrNull() ?: return@forEach
-            val normalizedPath = normalizePath(path, workTreeName)
-            val workingFile = File(workTree, normalizedPath.replace("/", File.separator))
-            if (!workingFile.exists()) return@forEach
-
-            val bytes = runCatching {
-                ByteArrayOutputStream().use { out ->
-                    client.wcClient.doGetFileContents(
-                        workingFile,
-                        SVNRevision.WORKING,
-                        SVNRevision.create(revisionNo),
-                        true,
-                        out
-                    )
-                    out.toByteArray()
-                }
-            }.getOrNull() ?: return@forEach
-
-            GitUtil.writeBinaryOutputFile(outputDir, normalizedPath, bytes)
-            applied += 1
+        val selectedRevision = duplicateFileVersionMap[path]
+        if (!selectedRevision.isNullOrBlank()) {
+            normalizedRevisions.firstOrNull { revision -> revision == selectedRevision }?.let { return it }
         }
 
-        return applied
+        return normalizedRevisions.first()
+    }
+
+    private fun writeSelectedRevisionRawFiles(
+        outputDir: File,
+        workTree: File,
+        revisionByPath: Map<String, String>
+    ): List<String> {
+        val client = createClientManagerWithCachedAuth()
+        val rootUrl = resolveWorkingCopyUrl(client, workTree) ?: return emptyList()
+        val writtenEntries = linkedSetOf<String>()
+
+        revisionByPath.forEach { (path, revisionText) ->
+            val revisionNo = revisionText.toLongOrNull() ?: return@forEach
+            val fileBytes = readFileBytesAtRevision(client, rootUrl, path, revisionNo)
+            if (fileBytes == null) {
+                log.warn("SVN revision file not found: revision={}, path={}", revisionText, path)
+                return@forEach
+            }
+
+            GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
+            writtenEntries.add(path)
+        }
+
+        return writtenEntries.toList()
+    }
+
+    private fun writeSelectedRevisionArtifacts(
+        outputDir: File,
+        workTree: File,
+        revisionByPath: Map<String, String>,
+        jdkPath: String?
+    ): List<String> {
+        val client = createClientManagerWithCachedAuth()
+        val rootUrl = resolveWorkingCopyUrl(client, workTree) ?: return emptyList()
+        val writtenEntries = linkedSetOf<String>()
+
+        revisionByPath.entries
+            .groupBy({ it.value }, { it.key })
+            .forEach { (revisionText, paths) ->
+                val revisionNo = revisionText.toLongOrNull() ?: return@forEach
+                val snapshotDir = Files.createTempDirectory("deploy-svn-revision-").toFile()
+                try {
+                    exportRevisionSnapshot(client, rootUrl, revisionNo, snapshotDir)
+
+                    val sourcePaths = paths.filter(::isJvmSourcePath)
+                    val rawPaths = paths.filterNot(::isJvmSourcePath)
+
+                    if (rawPaths.isNotEmpty()) {
+                        val rawEntries = GitUtil.addZipEntryName(snapshotDir, rawPaths).toList()
+                        GitUtil.addDirectoryEntry(outputDir, snapshotDir, rawPaths)
+                        writtenEntries.addAll(rawEntries)
+                    }
+
+                    if (sourcePaths.isNotEmpty()) {
+                        GitUtil.compileJvmProject(snapshotDir, jdkPath)
+                        GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+                        val mappedEntries = GitUtil.mapPathsForExtraction(sourcePaths, GitUtil.ArtifactProfile.JVM_CLASS_ONLY)
+                        val actualEntries = GitUtil.addZipEntryName(
+                            baseDir = snapshotDir,
+                            paths = mappedEntries,
+                            allowBuildArtifacts = true
+                        ).toList()
+                        GitUtil.addDirectoryEntry(
+                            targetDir = outputDir,
+                            baseDir = snapshotDir,
+                            paths = mappedEntries,
+                            allowBuildArtifacts = true
+                        )
+                        writtenEntries.addAll(actualEntries)
+                    }
+                } finally {
+                    snapshotDir.deleteRecursively()
+                }
+            }
+
+        return writtenEntries.toList()
+    }
+
+    private fun resolveWorkingCopyUrl(client: SVNClientManager, workTree: File): SVNURL? {
+        return runCatching {
+            client.wcClient.doInfo(workTree, SVNRevision.WORKING).url
+        }.getOrNull()
+    }
+
+    private fun readFileBytesAtRevision(
+        client: SVNClientManager,
+        rootUrl: SVNURL,
+        path: String,
+        revisionNo: Long
+    ): ByteArray? {
+        val normalizedPath = path.replace("\\", "/").removePrefix("/").trim()
+        if (normalizedPath.isBlank()) return null
+
+        return runCatching {
+            val revision = SVNRevision.create(revisionNo)
+            ByteArrayOutputStream().use { out ->
+                client.wcClient.doGetFileContents(
+                    rootUrl.appendPath(normalizedPath, false),
+                    revision,
+                    revision,
+                    true,
+                    out
+                )
+                out.toByteArray()
+            }
+        }.getOrNull()
+    }
+
+    private fun exportRevisionSnapshot(
+        client: SVNClientManager,
+        rootUrl: SVNURL,
+        revisionNo: Long,
+        targetDir: File
+    ) {
+        val revision = SVNRevision.create(revisionNo)
+        client.updateClient.doExport(
+            rootUrl,
+            targetDir,
+            revision,
+            revision,
+            null,
+            true,
+            SVNDepth.INFINITY
+        )
     }
 
     private fun createClientManagerWithCachedAuth(): SVNClientManager {
@@ -292,4 +396,7 @@ class SvnInfoCli {
         return if (os.contains("win")) File(System.getenv("APPDATA"), "Subversion")
         else File(System.getProperty("user.home"), ".subversion")
     }
+
+    private fun isJvmSourcePath(path: String): Boolean =
+        path.endsWith(".java", ignoreCase = true) || path.endsWith(".kt", ignoreCase = true)
 }
