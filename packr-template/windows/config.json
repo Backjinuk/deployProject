@@ -1,0 +1,10 @@
+{
+  "classPath": [
+    "deploy-project-cli.jar"
+  ],
+  "mainClass": "com.deployProject.cli.ExtractionLauncher",
+  "useZgcIfSupportedOs": false,
+  "vmArgs": [
+    "-Xmx512m"
+  ]
+}
