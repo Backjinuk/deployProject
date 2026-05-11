@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import axios from "axios";
 import Swal from "sweetalert2";
+import { serverApi } from "../../api/http";
 import { Site } from "../../api/sites";
 import { selectDirectory } from "../../api/directoryPicker";
 
@@ -34,7 +34,7 @@ export default function PathUpdateModal({
         if (show) {
             document.addEventListener("mousedown", handleClickOutside);
             const deployUser = JSON.parse(localStorage.getItem("deployUser") || "{}");
-            axios
+            serverApi
                 .post<Site[]>("/api/pathList", deployUser)
                 .then((res) => setPathList(res.data))
                 .catch((err) => console.error("path list load failed", err));
@@ -52,7 +52,7 @@ export default function PathUpdateModal({
     };
 
     const commitFieldUpdate = (id: number, field: EditableField, value: string) => {
-        axios.post("/api/updatePath", { id, field, value }).catch((err) => {
+        serverApi.post("/api/updatePath", { id, field, value }).catch((err) => {
             console.error("updatePath failed", err);
         });
     };
@@ -74,7 +74,7 @@ export default function PathUpdateModal({
     };
 
     const deletePath = async (id: number) => {
-        await axios.post("/api/deletePath", { id, useYn: "N" });
+        await serverApi.post("/api/deletePath", { id, useYn: "N" });
         await Swal.fire({
             position: "center",
             icon: "success",

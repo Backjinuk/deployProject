@@ -1,4 +1,5 @@
 import axios from "axios";
+import { localApi } from "./http";
 
 type DirectoryPickerResponse = {
     path: string | null;
@@ -6,7 +7,7 @@ type DirectoryPickerResponse = {
 
 export async function selectDirectory(currentPath?: string, title?: string): Promise<string | null> {
     try {
-        const response = await axios.post<DirectoryPickerResponse>("/api/select-directory", {
+        const response = await localApi.post<DirectoryPickerResponse>("/api/select-directory", {
             currentPath: currentPath?.trim() || null,
             title: title?.trim() || null,
         });

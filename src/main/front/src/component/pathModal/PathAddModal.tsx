@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import axios from "axios";
 import Swal from "sweetalert2";
+import { serverApi } from "../../api/http";
 import { selectDirectory } from "../../api/directoryPicker";
 
 type PathForm = {
@@ -130,7 +130,7 @@ export default function PathAddModal({
             return;
         }
 
-        await axios.post("/api/savedPath", form);
+        await serverApi.post("/api/savedPath", form);
         await Swal.fire({
             position: "center",
             icon: "success",

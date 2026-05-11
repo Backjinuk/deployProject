@@ -1,11 +1,11 @@
 import React, { forwardRef, useEffect, useState } from "react";
-import axios from "axios";
 import DatePicker from "react-datepicker";
 import { ko } from "date-fns/locale";
 import "react-datepicker/dist/react-datepicker.css";
 import Swal from "sweetalert2";
 
 import { Site } from "../../api/sites";
+import { localApi } from "../../api/http";
 import { styles } from "../../styles/PathConverterStyles";
 
 interface Props {
@@ -143,7 +143,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         setBulkDuplicateVersion("");
         setIsDuplicateModalOpen(false);
 
-        axios
+        localApi
             .post<RepoVersionListResponse>("/api/git/versions", {
                 localPath: site.localPath,
                 since: toLocalDateText(startDate),
@@ -193,7 +193,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         let cancelled = false;
         setIsLoadingFiles(true);
 
-        axios
+        localApi
             .post<RepoVersionFileListResponse>("/api/git/version-files", {
                 localPath: site.localPath,
                 selectedVersions,
@@ -442,7 +442,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     .filter((entry): entry is [string, string] => Boolean(entry[1]))
             );
 
-            const response = await axios.post(
+            const response = await localApi.post(
                 "/api/git/extraction",
                 {
                     siteId: site.id,

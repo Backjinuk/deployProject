@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
-import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import Swal from "sweetalert2";
 
 import { Site } from "../../api/sites";
+import { serverApi, serverApiBaseUrl } from "../../api/http";
 import SiteSelector from "./StieSelector";
 import PathConverter from "./PathConverter";
 import NickNameModal from "../login/NickNameModal";
@@ -28,7 +28,7 @@ const ConverterMain: React.FC = () => {
     const [showIntroGuideModal, setShowIntroGuideModal] = useState<boolean>(false);
 
     const fetchSites = useCallback((userId: number) => {
-        axios
+        serverApi
             .post<Site[]>("/api/sites", { id: userId })
             .then((res) => {
                 setSites(res.data);
@@ -81,7 +81,7 @@ const ConverterMain: React.FC = () => {
     };
 
     const handleSaveNick = (nickName: string) => {
-        axios
+        serverApi
             .post<DeployUser>("/api/login", { userName: nickName })
             .then((res) => {
                 localStorage.setItem("deployUser", JSON.stringify(res.data));
@@ -93,7 +93,7 @@ const ConverterMain: React.FC = () => {
                 const status = err?.response?.status;
                 const message = status
                     ? `로그인 요청 실패 (HTTP ${status})`
-                    : "백엔드 서버(9090) 또는 DB 연결 상태를 확인해 주세요.";
+                    : `백엔드 서버(${serverApiBaseUrl || "현재 서버"}) 또는 DB 연결 상태를 확인해 주세요.`;
                 Swal.fire({
                     icon: "error",
                     title: "로그인 실패",
