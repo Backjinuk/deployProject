@@ -1,0 +1,146 @@
+.download-page {
+  min-height: 100vh;
+  padding: 68px 24px;
+  color: #10243d;
+  background:
+    radial-gradient(900px 420px at 100% 0%, rgba(21, 165, 139, 0.16), transparent 62%),
+    radial-gradient(720px 360px at 0% 10%, rgba(23, 101, 193, 0.16), transparent 60%),
+    linear-gradient(180deg, #f7fbff 0%, #edf4ff 100%);
+}
+
+.download-hero {
+  width: min(860px, 100%);
+  margin: 0 auto;
+  text-align: center;
+}
+
+.download-copy {
+  min-width: 0;
+  padding: 24px 0 10px;
+}
+
+.download-badge {
+  display: inline-flex;
+  margin-bottom: 18px;
+  padding: 8px 12px;
+  border: 1px solid #c6d9f1;
+  border-radius: 999px;
+  color: #0f4a92;
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.download-copy h1 {
+  max-width: 100%;
+  margin: 0;
+  font-size: clamp(3rem, 4.8vw, 4.35rem);
+  line-height: 1;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.download-lead {
+  width: min(620px, 100%);
+  margin: 24px auto 0;
+  color: #27405d;
+  font-size: 1.08rem;
+  line-height: 1.72;
+}
+
+.download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 32px;
+}
+
+.download-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0 22px;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #0f4a92, #15a58b);
+  box-shadow: 0 16px 30px rgba(15, 74, 146, 0.24);
+  font-weight: 800;
+  text-decoration: none;
+  transition: transform 0.16s ease, box-shadow 0.2s ease;
+}
+
+.download-primary:hover {
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 20px 34px rgba(15, 74, 146, 0.3);
+}
+
+.download-note {
+  color: #45647f;
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+
+.download-steps {
+  width: min(1120px, 100%);
+  margin: 42px auto 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.download-steps article {
+  min-height: 140px;
+  padding: 20px;
+  border: 1px solid #d9e5f4;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 24px rgba(12, 34, 64, 0.08);
+}
+
+.download-steps strong {
+  display: block;
+  margin-bottom: 10px;
+  color: #0f4a92;
+  font-size: 1rem;
+}
+
+.download-steps p {
+  margin: 0;
+  color: #45647f;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .download-page {
+    padding: 32px 16px;
+  }
+
+  .download-hero {
+    text-align: left;
+  }
+
+  .download-copy h1 {
+    font-size: clamp(2.5rem, 10vw, 3.8rem);
+  }
+
+  .download-lead {
+    margin-left: 0;
+  }
+
+  .download-actions {
+    justify-content: flex-start;
+  }
+
+  .download-copy {
+    padding: 8px 0 0;
+  }
+
+  .download-steps {
+    grid-template-columns: 1fr;
+  }
+}
