@@ -32,7 +32,7 @@ deploy:
     remote-api-base-url: ${DEPLOY_PROJECT_REMOTE_API_BASE_URL:http://backjin.iptime.org:9090}
     installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:http://backjin.iptime.org:9090/download/deploy-project.exe}
   download:
-    installer-path: ${DEPLOY_PROJECT_INSTALLER_PATH:./DeployProject.exe}
+    installer-path: ${DEPLOY_PROJECT_INSTALLER_PATH:./download/DeployProject.exe}
     installer-file-name: ${DEPLOY_PROJECT_INSTALLER_FILE_NAME:DeployProject.exe}
 
 fgivpnT5008:

@@ -84,6 +84,19 @@
   font-weight: 700;
 }
 
+.download-message {
+  width: min(560px, 100%);
+  margin: 18px auto 0;
+  padding: 12px 14px;
+  border: 1px solid #f1c4cb;
+  border-radius: 12px;
+  color: #9f2d3a;
+  background: rgba(255, 246, 247, 0.88);
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
 .download-steps {
   width: min(1120px, 100%);
   margin: 42px auto 0;
@@ -129,6 +142,10 @@
   }
 
   .download-lead {
+    margin-left: 0;
+  }
+
+  .download-message {
     margin-left: 0;
   }
 

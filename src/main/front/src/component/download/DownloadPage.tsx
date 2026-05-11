@@ -1,7 +1,33 @@
+import { useState } from "react";
 import "./DownloadPage.css";
 import { installerDownloadUrl } from "../../api/http";
 
 const DownloadPage = () => {
+    const [downloadState, setDownloadState] = useState<"idle" | "checking">("idle");
+    const [downloadMessage, setDownloadMessage] = useState("");
+
+    const handleDownload = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        if (downloadState === "checking") return;
+
+        setDownloadState("checking");
+        setDownloadMessage("");
+
+        try {
+            const response = await fetch(installerDownloadUrl, { method: "HEAD" });
+            if (!response.ok) {
+                throw new Error(`Installer check failed: ${response.status}`);
+            }
+
+            window.location.href = installerDownloadUrl;
+        } catch (error) {
+            console.error("installer download check failed", error);
+            setDownloadMessage("설치 파일이 아직 서버에 준비되지 않았습니다. 관리자에게 다운로드 파일 경로를 확인해 주세요.");
+        } finally {
+            setDownloadState("idle");
+        }
+    };
+
     return (
         <main className="download-page">
             <section className="download-hero">
@@ -13,11 +39,13 @@ const DownloadPage = () => {
                     </p>
 
                     <div className="download-actions">
-                        <a className="download-primary" href={installerDownloadUrl}>
-                            DeployProject.exe 다운로드
+                        <a className="download-primary" href={installerDownloadUrl} onClick={handleDownload}>
+                            {downloadState === "checking" ? "파일 확인 중..." : "DeployProject.exe 다운로드"}
                         </a>
                         <span className="download-note">Windows 설치 파일</span>
                     </div>
+
+                    {downloadMessage && <p className="download-message">{downloadMessage}</p>}
                 </div>
             </section>
 

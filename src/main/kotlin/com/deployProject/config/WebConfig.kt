@@ -15,7 +15,7 @@ class WebConfig : WebMvcConfigurer {
                 "http://127.0.0.1:*",
                 "http://backjin.iptime.org:*"
             )
-            .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+            .allowedMethods("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS")
 
     }
 }
