@@ -1,7 +1,7 @@
 import axios from "axios";
 
-const DEFAULT_REMOTE_API_BASE_URL = "http://backjin.iptime.org:9090";
-//const DEFAULT_REMOTE_API_BASE_URL = "http://localhost:9090";
+const DEFAULT_API_PORT = process.env.REACT_APP_API_PORT || "9090";
+const INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
 
 type ServerApiMode = "LOCAL" | "REMOTE";
 
@@ -19,6 +19,17 @@ declare global {
 }
 
 const normalizeBaseUrl = (value?: string) => (value ?? "").trim().replace(/\/+$/, "");
+const isBrowser = typeof window !== "undefined";
+
+const defaultRemoteApiBaseUrl = () => {
+    if (!isBrowser) {
+        return `http://localhost:${DEFAULT_API_PORT}`;
+    }
+
+    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+    const hostname = window.location.hostname || "localhost";
+    return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
+};
 
 const runtimeConfig = typeof window !== "undefined" ? window.__DEPLOY_PROJECT_CONFIG__ : undefined;
 const configuredMode = (runtimeConfig?.serverApiMode || process.env.REACT_APP_SERVER_API_MODE || "LOCAL").toUpperCase();
@@ -27,11 +38,11 @@ const configuredUiMode = (runtimeConfig?.uiMode || process.env.REACT_APP_UI_MODE
 export const uiMode = configuredUiMode === "DOWNLOAD" ? "DOWNLOAD" : "APP";
 export const serverApiMode: ServerApiMode = configuredMode === "REMOTE" ? "REMOTE" : "LOCAL";
 export const remoteApiBaseUrl = normalizeBaseUrl(
-    runtimeConfig?.remoteApiBaseUrl || process.env.REACT_APP_REMOTE_API_BASE_URL || DEFAULT_REMOTE_API_BASE_URL
+    runtimeConfig?.remoteApiBaseUrl || process.env.REACT_APP_REMOTE_API_BASE_URL || defaultRemoteApiBaseUrl()
 );
 export const serverApiBaseUrl = serverApiMode === "REMOTE" ? remoteApiBaseUrl : "";
 export const installerDownloadUrl =
-    runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL || "/download/deploy-project.exe";
+    runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL || `${remoteApiBaseUrl}${INSTALLER_DOWNLOAD_PATH}`;
 
 export const serverApi = axios.create({
     baseURL: serverApiBaseUrl,

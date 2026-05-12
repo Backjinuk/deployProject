@@ -1,5 +1,7 @@
 package com.deployProject.deploy.controller
 
+import com.deployProject.DeployProjectApplication
+import org.springframework.boot.system.ApplicationHome
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.PathResource
 import org.springframework.http.HttpHeaders
@@ -13,6 +15,21 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.io.path.name
+
+data class InstallerStatusResponse(
+    val workingDir: String,
+    val applicationDir: String,
+    val configuredPath: String?,
+    val selectedPath: String?,
+    val candidates: List<InstallerCandidateStatus>
+)
+
+data class InstallerCandidateStatus(
+    val path: String,
+    val exists: Boolean,
+    val regularFile: Boolean,
+    val size: Long?
+)
 
 @RestController
 class DownloadController(
@@ -45,35 +62,59 @@ class DownloadController(
             .body(PathResource(path))
     }
 
+    @GetMapping("/download/installer-status")
+    fun installerStatus(): InstallerStatusResponse {
+        val candidates = installerCandidatePaths()
+        val selectedPath = candidates.firstOrNull { Files.isRegularFile(it) }
+
+        return InstallerStatusResponse(
+            workingDir().toString(),
+            applicationDir().toString(),
+            installerPath.trim().ifBlank { null },
+            selectedPath?.toString(),
+            candidates.map { candidate ->
+                val regularFile = Files.isRegularFile(candidate)
+                InstallerCandidateStatus(
+                    path = candidate.toString(),
+                    exists = Files.exists(candidate),
+                    regularFile = regularFile,
+                    size = if (regularFile) Files.size(candidate) else null
+                )
+            }
+        )
+    }
+
     private fun resolveInstallerPath(): Path? {
-        configuredInstallerPath()?.let { return it }
-
-        val directCandidates = listOf(
-            findLatestJpackageInstaller(),
-            Paths.get("./download/DeployProject.exe"),
-            Paths.get("./build/download/DeployProject.exe")
-        ).filterNotNull()
-
-        directCandidates
-            .map { it.toAbsolutePath().normalize() }
-            .firstOrNull { Files.isRegularFile(it) }
-            ?.let { return it }
-
-        return null
+        return installerCandidatePaths().firstOrNull { Files.isRegularFile(it) }
     }
 
-    private fun configuredInstallerPath(): Path? {
+    private fun installerCandidatePaths(): List<Path> {
+        val candidates = linkedSetOf<Path>()
+        configuredInstallerPaths().forEach { candidates.add(it) }
+
+        baseDirs().forEach { baseDir ->
+            findLatestJpackageInstaller(baseDir)?.let { candidates.add(it) }
+            candidates.add(baseDir.resolve("build/download/DeployProject.exe").normalize())
+            candidates.add(baseDir.resolve("download/DeployProject.exe").normalize())
+        }
+
+        return candidates.toList()
+    }
+
+    private fun configuredInstallerPaths(): List<Path> {
         val configuredPath = installerPath.trim()
-        if (configuredPath.isBlank()) return null
+        if (configuredPath.isBlank()) return emptyList()
 
-        return Paths.get(configuredPath)
-            .toAbsolutePath()
-            .normalize()
-            .takeIf { Files.isRegularFile(it) }
+        val path = Paths.get(configuredPath)
+        if (path.isAbsolute) {
+            return listOf(path.normalize())
+        }
+
+        return baseDirs().map { baseDir -> baseDir.resolve(path).normalize() }
     }
 
-    private fun findLatestJpackageInstaller(): Path? {
-        val jpackageOutputDir = Paths.get("./build/jpackage-output").toAbsolutePath().normalize()
+    private fun findLatestJpackageInstaller(baseDir: Path): Path? {
+        val jpackageOutputDir = baseDir.resolve("build/jpackage-output").normalize()
         if (!Files.isDirectory(jpackageOutputDir)) return null
 
         return Files.list(jpackageOutputDir).use { paths ->
@@ -84,4 +125,13 @@ class DownloadController(
                 .orElse(null)
         }
     }
+
+    private fun baseDirs(): List<Path> {
+        return linkedSetOf(workingDir(), applicationDir()).toList()
+    }
+
+    private fun workingDir(): Path = Paths.get("").toAbsolutePath().normalize()
+
+    private fun applicationDir(): Path =
+        ApplicationHome(DeployProjectApplication::class.java).dir.toPath().toAbsolutePath().normalize()
 }
