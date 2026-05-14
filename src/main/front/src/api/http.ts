@@ -21,14 +21,25 @@ declare global {
 const normalizeBaseUrl = (value?: string) => (value ?? "").trim().replace(/\/+$/, "");
 const isBrowser = typeof window !== "undefined";
 
+const isLocalHost = (hostname: string) => hostname === "localhost" || hostname === "127.0.0.1";
+
 const defaultRemoteApiBaseUrl = () => {
     if (!isBrowser) {
         return `http://localhost:${DEFAULT_API_PORT}`;
     }
 
-    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
     const hostname = window.location.hostname || "localhost";
-    return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
+    const isLocalDev = isLocalHost(hostname);
+    const isDevServerPort = window.location.port === "3000" || window.location.port === "8080";
+
+    if (isLocalDev || isDevServerPort) {
+        const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+        return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
+    }
+
+    // Production HTTPS traffic should go through the reverse proxy on 443.
+    // Direct browser access to https://domain:9090 sends TLS bytes to a plain HTTP Tomcat port.
+    return window.location.origin;
 };
 
 const runtimeConfig = typeof window !== "undefined" ? window.__DEPLOY_PROJECT_CONFIG__ : undefined;

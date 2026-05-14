@@ -25,8 +25,15 @@ class ClientRuntimeConfigController(
     fun runtimeConfig(request: HttpServletRequest): ResponseEntity<String> {
         val requestBaseUrl = requestBaseUrl(request)
         val resolvedRemoteApiBaseUrl = remoteApiBaseUrl.trim().ifBlank { requestBaseUrl }.trimEnd('/')
+        val configuredInstallerBaseUrl = remoteApiBaseUrl.trim().trimEnd('/')
         val resolvedInstallerDownloadUrl = installerDownloadUrl.trim()
-            .ifBlank { "$resolvedRemoteApiBaseUrl/download/deploy-project.exe" }
+            .ifBlank {
+                if (configuredInstallerBaseUrl.isBlank()) {
+                    "/download/deploy-project.exe"
+                } else {
+                    "$configuredInstallerBaseUrl/download/deploy-project.exe"
+                }
+            }
 
         val config = mapOf(
             "uiMode" to uiMode.trim().uppercase(),
@@ -42,14 +49,30 @@ class ClientRuntimeConfigController(
     }
 
     private fun requestBaseUrl(request: HttpServletRequest): String {
-        val scheme = request.getHeader("X-Forwarded-Proto")?.substringBefore(",")?.trim()
+        val forwarded = parseForwardedHeader(request.getHeader("Forwarded"))
+        val scheme = forwarded["proto"]
+            ?: request.getHeader("X-Forwarded-Proto")?.substringBefore(",")?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: request.scheme
-        val host = request.getHeader("X-Forwarded-Host")?.substringBefore(",")?.trim()
+        val host = forwarded["host"]
+            ?: request.getHeader("X-Forwarded-Host")?.substringBefore(",")?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: request.getHeader("Host")?.trim()
             ?: "${request.serverName}:${request.serverPort}"
 
         return "$scheme://$host"
+    }
+
+    private fun parseForwardedHeader(value: String?): Map<String, String> {
+        if (value.isNullOrBlank()) return emptyMap()
+
+        return value.substringBefore(",")
+            .split(";")
+            .mapNotNull { part ->
+                val key = part.substringBefore("=", "").trim().lowercase()
+                val rawValue = part.substringAfter("=", "").trim().trim('"')
+                if (key.isBlank() || rawValue.isBlank()) null else key to rawValue
+            }
+            .toMap()
     }
 }
