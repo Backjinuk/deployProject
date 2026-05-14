@@ -127,7 +127,16 @@ class DownloadController(
     }
 
     private fun baseDirs(): List<Path> {
-        return linkedSetOf(workingDir(), applicationDir()).toList()
+        val dirs = linkedSetOf<Path>()
+        listOf(workingDir(), applicationDir()).forEach { dir ->
+            dirs.add(dir)
+            dir.parent?.let { parent ->
+                dirs.add(parent)
+                parent.parent?.let { projectRoot -> dirs.add(projectRoot) }
+            }
+        }
+
+        return dirs.toList()
     }
 
     private fun workingDir(): Path = Paths.get("").toAbsolutePath().normalize()
