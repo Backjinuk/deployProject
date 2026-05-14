@@ -20,6 +20,7 @@ data class InstallerStatusResponse(
     val workingDir: String,
     val applicationDir: String,
     val configuredPath: String?,
+    val configuredDir: String?,
     val selectedPath: String?,
     val candidates: List<InstallerCandidateStatus>
 )
@@ -35,6 +36,8 @@ data class InstallerCandidateStatus(
 class DownloadController(
     @Value("\${deploy.download.installer-path:}")
     private val installerPath: String,
+    @Value("\${deploy.download.installer-dir:}")
+    private val installerDir: String,
     @Value("\${deploy.download.installer-file-name:}")
     private val installerFileName: String
 ) {
@@ -71,6 +74,7 @@ class DownloadController(
             workingDir().toString(),
             applicationDir().toString(),
             installerPath.trim().ifBlank { null },
+            installerDir.trim().ifBlank { null },
             selectedPath?.toString(),
             candidates.map { candidate ->
                 val regularFile = Files.isRegularFile(candidate)
@@ -91,10 +95,15 @@ class DownloadController(
     private fun installerCandidatePaths(): List<Path> {
         val candidates = linkedSetOf<Path>()
         configuredInstallerPaths().forEach { candidates.add(it) }
+        configuredInstallerDirs().forEach { installerDir ->
+            findLatestInstallerInDir(installerDir)?.let { candidates.add(it) }
+            candidates.add(installerDir.resolve("DeployProject.exe").normalize())
+        }
 
         baseDirs().forEach { baseDir ->
             findLatestJpackageInstaller(baseDir)?.let { candidates.add(it) }
             candidates.add(baseDir.resolve("build/download/DeployProject.exe").normalize())
+            findLatestInstallerInDir(baseDir.resolve("download"))?.let { candidates.add(it) }
             candidates.add(baseDir.resolve("download/DeployProject.exe").normalize())
         }
 
@@ -113,14 +122,32 @@ class DownloadController(
         return baseDirs().map { baseDir -> baseDir.resolve(path).normalize() }
     }
 
+    private fun configuredInstallerDirs(): List<Path> {
+        val configuredDir = installerDir.trim()
+        if (configuredDir.isBlank()) return emptyList()
+
+        val path = Paths.get(configuredDir)
+        if (path.isAbsolute) {
+            return listOf(path.normalize())
+        }
+
+        return baseDirs().map { baseDir -> baseDir.resolve(path).normalize() }
+    }
+
     private fun findLatestJpackageInstaller(baseDir: Path): Path? {
         val jpackageOutputDir = baseDir.resolve("build/jpackage-output").normalize()
         if (!Files.isDirectory(jpackageOutputDir)) return null
 
-        return Files.list(jpackageOutputDir).use { paths ->
+        return findLatestInstallerInDir(jpackageOutputDir)
+    }
+
+    private fun findLatestInstallerInDir(dir: Path): Path? {
+        if (!Files.isDirectory(dir)) return null
+
+        return Files.list(dir).use { paths ->
             paths
                 .filter { Files.isRegularFile(it) }
-                .filter { it.name.startsWith("DeployProject-") && it.name.endsWith(".exe") }
+                .filter { it.name == "DeployProject.exe" || (it.name.startsWith("DeployProject-") && it.name.endsWith(".exe")) }
                 .max(Comparator.comparing { Files.getLastModifiedTime(it) })
                 .orElse(null)
         }

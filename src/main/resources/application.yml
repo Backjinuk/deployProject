@@ -1,9 +1,9 @@
 name: deployProject
 
 server:
-  tomcat:
-    connection-timeout: 600000   # 10분
   port: 9090
+  tomcat:
+    connection-timeout: 600000
 
 spring:
   main:
@@ -33,6 +33,7 @@ deploy:
     installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:}
   download:
     installer-path: ${DEPLOY_PROJECT_INSTALLER_PATH:}
+    installer-dir: ${DEPLOY_PROJECT_INSTALLER_DIR:/mnt/toshiba1t/application/deployProject/download}
     installer-file-name: ${DEPLOY_PROJECT_INSTALLER_FILE_NAME:}
 
 fgivpnT5008:
