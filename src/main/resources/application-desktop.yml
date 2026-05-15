@@ -27,5 +27,5 @@ deploy:
   client:
     ui-mode: ${DEPLOY_PROJECT_UI_MODE:APP}
     server-api-mode: ${DEPLOY_PROJECT_SERVER_API_MODE:REMOTE}
-    remote-api-base-url: ${DEPLOY_PROJECT_REMOTE_API_BASE_URL:https://deploy.jinuk.dev/}
-    installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:https://deploy.jinuk.dev/download/deploy-project.exe}
+    remote-api-base-url: ${DEPLOY_PROJECT_REMOTE_API_BASE_URL:http://backjin.iptime.org:9090}
+    installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:http://backjin.iptime.org:9090/download/deploy-project.exe}

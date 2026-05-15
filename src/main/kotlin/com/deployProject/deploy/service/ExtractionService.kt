@@ -66,25 +66,17 @@ class ExtractionService(
     /** Current host OS name used for runtime branching. */
     private val hostOsName = System.getProperty("os.name").lowercase()
 
+    private val runtimeWorkspaceRoot: Path = resolveRuntimeWorkspaceRoot()
+
     /** Root directory for target-specific minimal JREs. */
-    private val customJreBase: Path = Paths.get("").toAbsolutePath().resolve("custom-jre")
+    private val customJreBase: Path = runtimeWorkspaceRoot.resolve("custom-jre")
 
     // Keep extraction output under a managed workspace root instead of mixing
     // generated artifacts into source directories.
-    private val extractionWorkRoot: Path = Paths.get("").toAbsolutePath().resolve("GitInfoJarFile")
+    private val extractionWorkRoot: Path = runtimeWorkspaceRoot.resolve("GitInfoJarFile")
 
-    /**
-     * Java home used to run jlink.
-     * - `-Dapp.javaHome` overrides everything.
-     * - Otherwise we fall back to a host-specific default path.
-     */
-    private val javaHome: Path = System.getProperty("app.javaHome")?.let { Path.of(it) } ?: run {
-        when {
-            hostOsName.contains("windows") -> Path.of("C:/Program Files/Java/jdk-17")
-            hostOsName.contains("mac")     -> Path.of("/Users/mac/.sdkman/candidates/java/current")
-            else                           -> Path.of("/home/bjw/.sdkman/candidates/java/current")
-        }
-    }
+    /** Root directory for cached Packr launcher templates. */
+    private val packrTemplateBase: Path = runtimeWorkspaceRoot.resolve("packr-template")
 
     /** Prevent concurrent jlink runs from racing on the same target directory. */
     private val jlinkLock = Any()
@@ -137,7 +129,7 @@ class ExtractionService(
         }
 
         // 1. Ensure a target-specific runtime exists.
-        ensureTargetJre(target)
+        ensureTargetJre(target, extractionDto.jdkPath)
 
         // 2. Create a per-request working directory.
         val baseDir = resolveBaseDir()
@@ -622,7 +614,7 @@ class ExtractionService(
     }
 
     /** Ensure that a target-specific minimal JRE exists. */
-    private fun ensureTargetJre(target: TargetOsStatus) {
+    private fun ensureTargetJre(target: TargetOsStatus, requestedJdkPath: String?) {
         val targetDir = targetJreDir(target)
         val javaName = if (target == TargetOsStatus.WINDOWS) "java.exe" else "java"
         val javaBin = targetDir.resolve("bin").resolve(javaName)
@@ -649,6 +641,7 @@ class ExtractionService(
         synchronized(jlinkLock) {
             if (Files.exists(javaBin)) return
 
+            val javaHome = resolveJlinkJavaHome(requestedJdkPath)
             logger.info("Generating target JRE with jlink: {}, javaHome={}", targetDir, javaHome)
 
             val modules = listOf(
@@ -669,6 +662,67 @@ class ExtractionService(
 
     /* -------------------------- Paths & Utils -------------------------- */
 
+    private fun resolveRuntimeWorkspaceRoot(): Path {
+        System.getProperty("deploy.workspace")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return Files.createDirectories(Path.of(it).toAbsolutePath()) }
+
+        val currentDir = Paths.get("").toAbsolutePath()
+        if (Files.isWritable(currentDir)) return currentDir
+
+        val fallback = Paths.get(System.getProperty("user.home"), ".deploy-project", "runtime")
+        return Files.createDirectories(fallback)
+    }
+
+    private fun resolveJlinkJavaHome(requestedJdkPath: String?): Path {
+        val candidates = mutableListOf<Path>()
+
+        requestedJdkPath
+            ?.takeIf { it.isNotBlank() }
+            ?.let { candidates.add(normalizeJavaHomePath(Path.of(it))) }
+
+        System.getProperty("app.javaHome")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { candidates.add(normalizeJavaHomePath(Path.of(it))) }
+
+        System.getenv("JAVA_HOME")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { candidates.add(normalizeJavaHomePath(Path.of(it))) }
+
+        candidates.add(normalizeJavaHomePath(Path.of(System.getProperty("java.home"))))
+
+        if (hostOsName.contains("windows")) {
+            candidates.add(Path.of("C:/Program Files/Java/jdk-17"))
+            candidates.add(Path.of("C:/Program Files/Java/jdk-21"))
+        } else if (hostOsName.contains("mac")) {
+            candidates.add(Path.of("/Users/mac/.sdkman/candidates/java/current"))
+        } else {
+            candidates.add(Path.of("/home/bjw/.sdkman/candidates/java/current"))
+        }
+
+        return candidates
+            .distinct()
+            .firstOrNull { hasJlink(it) }
+            ?: error(
+                "jlink executable was not found. Configure a full JDK path in jdkPath, JAVA_HOME, or -Dapp.javaHome."
+            )
+    }
+
+    private fun normalizeJavaHomePath(path: Path): Path {
+        val fileName = path.fileName?.toString()?.lowercase().orEmpty()
+        return when {
+            fileName == "bin" -> path.parent ?: path
+            fileName == "java.exe" || fileName == "java" || fileName == "jlink.exe" || fileName == "jlink" ->
+                path.parent?.parent ?: path
+            else -> path
+        }.toAbsolutePath()
+    }
+
+    private fun hasJlink(javaHome: Path): Boolean {
+        val executable = javaHome.resolve("bin").resolve(if (hostOsName.contains("windows")) "jlink.exe" else "jlink")
+        return Files.isExecutable(executable)
+    }
+
     /** Target-specific JRE directory. */
     private fun targetJreDir(target: TargetOsStatus): Path =
         when (target) {
@@ -684,7 +738,7 @@ class ExtractionService(
             TargetOsStatus.MAC     -> "mac"
             TargetOsStatus.LINUX   -> "linux"
         }
-        return Paths.get("").toAbsolutePath().resolve("packr-template").resolve(tag).toFile()
+        return packrTemplateBase.resolve(tag).toFile()
     }
 
     /** Executable name for the target OS. */

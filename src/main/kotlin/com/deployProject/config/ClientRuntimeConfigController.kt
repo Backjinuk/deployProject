@@ -20,19 +20,17 @@ class ClientRuntimeConfigController(
     @Value("\${deploy.client.installer-download-url:}")
     private val installerDownloadUrl: String
 ) {
+    private val defaultApiPort = "9090"
+    private val productionApiBaseUrl = "http://backjin.iptime.org:$defaultApiPort"
 
     @GetMapping("/runtime-config.js", produces = ["application/javascript;charset=UTF-8"])
     fun runtimeConfig(request: HttpServletRequest): ResponseEntity<String> {
-        val requestBaseUrl = requestBaseUrl(request)
-        val resolvedRemoteApiBaseUrl = remoteApiBaseUrl.trim().ifBlank { requestBaseUrl }.trimEnd('/')
-        val configuredInstallerBaseUrl = remoteApiBaseUrl.trim().trimEnd('/')
+        val resolvedRemoteApiBaseUrl = remoteApiBaseUrl.trim()
+            .ifBlank { defaultApiBaseUrl(request) }
+            .trimEnd('/')
         val resolvedInstallerDownloadUrl = installerDownloadUrl.trim()
             .ifBlank {
-                if (configuredInstallerBaseUrl.isBlank()) {
-                    "/download/deploy-project.exe"
-                } else {
-                    "$configuredInstallerBaseUrl/download/deploy-project.exe"
-                }
+                "$resolvedRemoteApiBaseUrl/download/deploy-project.exe"
             }
 
         val config = mapOf(
@@ -61,6 +59,21 @@ class ClientRuntimeConfigController(
             ?: "${request.serverName}:${request.serverPort}"
 
         return "$scheme://$host"
+    }
+
+    private fun defaultApiBaseUrl(request: HttpServletRequest): String {
+        val requestBaseUrl = requestBaseUrl(request)
+        val host = requestBaseUrl
+            .substringAfter("://", requestBaseUrl)
+            .substringBefore("/")
+            .substringBefore(":")
+            .lowercase()
+
+        return if (host == "localhost" || host == "127.0.0.1") {
+            "http://localhost:$defaultApiPort"
+        } else {
+            productionApiBaseUrl
+        }
     }
 
     private fun parseForwardedHeader(value: String?): Map<String, String> {

@@ -1,6 +1,9 @@
 import axios from "axios";
 
 const DEFAULT_API_PORT = process.env.REACT_APP_API_PORT || "9090";
+const LOCAL_API_BASE_URL = `http://localhost:${DEFAULT_API_PORT}`;
+const PRODUCTION_API_BASE_URL =
+    process.env.REACT_APP_PRODUCTION_API_BASE_URL || `http://backjin.iptime.org:${DEFAULT_API_PORT}`;
 const INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
 
 type ServerApiMode = "LOCAL" | "REMOTE";
@@ -9,6 +12,7 @@ type DeployProjectRuntimeConfig = {
     uiMode?: string;
     serverApiMode?: string;
     remoteApiBaseUrl?: string;
+    localApiBaseUrl?: string;
     installerDownloadUrl?: string;
 };
 
@@ -23,23 +27,15 @@ const isBrowser = typeof window !== "undefined";
 
 const isLocalHost = (hostname: string) => hostname === "localhost" || hostname === "127.0.0.1";
 
-const defaultRemoteApiBaseUrl = () => {
-    if (!isBrowser) {
-        return `http://localhost:${DEFAULT_API_PORT}`;
-    }
-
+const isLocalBrowser = () => {
+    if (!isBrowser) return true;
     const hostname = window.location.hostname || "localhost";
-    const isLocalDev = isLocalHost(hostname);
     const isDevServerPort = window.location.port === "3000" || window.location.port === "8080";
+    return isLocalHost(hostname) || isDevServerPort;
+};
 
-    if (isLocalDev || isDevServerPort) {
-        const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-        return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
-    }
-
-    // Production HTTPS traffic should go through the reverse proxy on 443.
-    // Direct browser access to https://domain:9090 sends TLS bytes to a plain HTTP Tomcat port.
-    return window.location.origin;
+const defaultRemoteApiBaseUrl = () => {
+    return isLocalBrowser() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL;
 };
 
 const runtimeConfig = typeof window !== "undefined" ? window.__DEPLOY_PROJECT_CONFIG__ : undefined;
@@ -52,6 +48,11 @@ export const remoteApiBaseUrl = normalizeBaseUrl(
     runtimeConfig?.remoteApiBaseUrl || process.env.REACT_APP_REMOTE_API_BASE_URL || defaultRemoteApiBaseUrl()
 );
 export const serverApiBaseUrl = serverApiMode === "REMOTE" ? remoteApiBaseUrl : "";
+export const localApiBaseUrl = normalizeBaseUrl(
+    runtimeConfig?.localApiBaseUrl ||
+        process.env.REACT_APP_LOCAL_API_BASE_URL ||
+        (uiMode === "APP" ? "" : defaultRemoteApiBaseUrl())
+);
 export const installerDownloadUrl =
     runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL || `${remoteApiBaseUrl}${INSTALLER_DOWNLOAD_PATH}`;
 
@@ -60,5 +61,5 @@ export const serverApi = axios.create({
 });
 
 export const localApi = axios.create({
-    baseURL: "",
+    baseURL: localApiBaseUrl,
 });

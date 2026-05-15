@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.deployproject"
-version = "1.0.0"
+version = "1.0.1"
 
 java {
     // 컴파일 대상 JVM 버전 17 설정

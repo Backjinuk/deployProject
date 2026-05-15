@@ -28,7 +28,7 @@ spring:
 deploy:
   client:
     ui-mode: ${DEPLOY_PROJECT_UI_MODE:DOWNLOAD}
-    server-api-mode: ${DEPLOY_PROJECT_SERVER_API_MODE:LOCAL}
+    server-api-mode: ${DEPLOY_PROJECT_SERVER_API_MODE:REMOTE}
     remote-api-base-url: ${DEPLOY_PROJECT_REMOTE_API_BASE_URL:}
     installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:}
   download:
