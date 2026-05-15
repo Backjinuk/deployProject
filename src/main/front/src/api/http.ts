@@ -3,7 +3,8 @@ import axios from "axios";
 const DEFAULT_API_PORT = process.env.REACT_APP_API_PORT || "9090";
 const LOCAL_API_BASE_URL = `http://localhost:${DEFAULT_API_PORT}`;
 const PRODUCTION_API_BASE_URL =
-    process.env.REACT_APP_PRODUCTION_API_BASE_URL || `http://backjin.iptime.org:${DEFAULT_API_PORT}`;
+    process.env.REACT_APP_PRODUCTION_API_BASE_URL || `https://deploy.jinuk.dev`;
+    // process.env.REACT_APP_PRODUCTION_API_BASE_URL || `http://backjin.iptime.org:${DEFAULT_API_PORT}`;
 const INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
 
 type ServerApiMode = "LOCAL" | "REMOTE";
