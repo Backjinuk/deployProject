@@ -22,6 +22,8 @@ class ClientRuntimeConfigController(
 ) {
     private val defaultApiPort = "9090"
     private val productionApiBaseUrl = "http://backjin.iptime.org:$defaultApiPort"
+    private val installerDownloadPath = "/download/deploy-project.exe"
+    private val productionInstallerDownloadBaseUrl = "https://deploy.jinuk.dev"
 
     @GetMapping("/runtime-config.js", produces = ["application/javascript;charset=UTF-8"])
     fun runtimeConfig(request: HttpServletRequest): ResponseEntity<String> {
@@ -30,8 +32,9 @@ class ClientRuntimeConfigController(
             .trimEnd('/')
         val resolvedInstallerDownloadUrl = installerDownloadUrl.trim()
             .ifBlank {
-                "$resolvedRemoteApiBaseUrl/download/deploy-project.exe"
+                "$resolvedRemoteApiBaseUrl$installerDownloadPath"
             }
+            .let { forceProductionInstallerDownloadUrl(it, request) }
 
         val config = mapOf(
             "uiMode" to uiMode.trim().uppercase(),
@@ -74,6 +77,32 @@ class ClientRuntimeConfigController(
         } else {
             productionApiBaseUrl
         }
+    }
+
+    private fun forceProductionInstallerDownloadUrl(value: String, request: HttpServletRequest): String {
+        val trimmed = value.trim()
+        if (isLocalRequest(request)) return trimmed
+
+        val pathOnly = trimmed
+            .substringBefore("?")
+            .substringBefore("#")
+            .trimEnd('/')
+
+        return if (pathOnly == installerDownloadPath || pathOnly.endsWith(installerDownloadPath)) {
+            "$productionInstallerDownloadBaseUrl$installerDownloadPath"
+        } else {
+            trimmed
+        }
+    }
+
+    private fun isLocalRequest(request: HttpServletRequest): Boolean {
+        val host = requestBaseUrl(request)
+            .substringAfter("://", "")
+            .substringBefore("/")
+            .substringBefore(":")
+            .lowercase()
+
+        return host == "localhost" || host == "127.0.0.1"
     }
 
     private fun parseForwardedHeader(value: String?): Map<String, String> {

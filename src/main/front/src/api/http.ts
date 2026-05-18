@@ -6,6 +6,7 @@ const PRODUCTION_API_BASE_URL =
     process.env.REACT_APP_PRODUCTION_API_BASE_URL || `https://deploy.jinuk.dev`;
     // process.env.REACT_APP_PRODUCTION_API_BASE_URL || `http://backjin.iptime.org:${DEFAULT_API_PORT}`;
 const INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
+const PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL = "https://deploy.jinuk.dev";
 
 type ServerApiMode = "LOCAL" | "REMOTE";
 
@@ -35,6 +36,28 @@ const isLocalBrowser = () => {
     return isLocalHost(hostname) || isDevServerPort;
 };
 
+const isInstallerDownloadPath = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed === INSTALLER_DOWNLOAD_PATH) return true;
+
+    try {
+        return new URL(trimmed, PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL).pathname === INSTALLER_DOWNLOAD_PATH;
+    } catch {
+        return false;
+    }
+};
+
+const resolveInstallerDownloadUrl = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return `${PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL}${INSTALLER_DOWNLOAD_PATH}`;
+
+    if (!isLocalBrowser() && isInstallerDownloadPath(trimmed)) {
+        return `${PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL}${INSTALLER_DOWNLOAD_PATH}`;
+    }
+
+    return trimmed;
+};
+
 const defaultRemoteApiBaseUrl = () => {
     return isLocalBrowser() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL;
 };
@@ -55,7 +78,9 @@ export const localApiBaseUrl = normalizeBaseUrl(
         (uiMode === "APP" ? "" : defaultRemoteApiBaseUrl())
 );
 export const installerDownloadUrl =
-    runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL || `${remoteApiBaseUrl}${INSTALLER_DOWNLOAD_PATH}`;
+    resolveInstallerDownloadUrl(
+        runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL || `${remoteApiBaseUrl}${INSTALLER_DOWNLOAD_PATH}`
+    );
 
 export const serverApi = axios.create({
     baseURL: serverApiBaseUrl,
