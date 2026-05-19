@@ -177,6 +177,62 @@ object GitUtil {
         }.distinct()
     }
 
+    fun normalizeSvnWorkingCopyRepositoryPath(
+        workingCopyUrlPath: String?,
+        repositoryRootUrlPath: String?
+    ): String? {
+        val workingCopyPath = normalizePathText(workingCopyUrlPath.orEmpty()).trim('/')
+        if (workingCopyPath.isBlank()) return null
+
+        val repositoryRootPath = normalizePathText(repositoryRootUrlPath.orEmpty()).trim('/')
+        if (repositoryRootPath.isBlank()) return workingCopyPath
+
+        return when {
+            workingCopyPath.equals(repositoryRootPath, ignoreCase = true) -> ""
+            workingCopyPath.startsWith("$repositoryRootPath/", ignoreCase = true) ->
+                workingCopyPath.substring(repositoryRootPath.length + 1).trim('/')
+            else -> workingCopyPath
+        }
+    }
+
+    fun normalizeSvnRepositoryPath(
+        rawPath: String,
+        workTreeName: String,
+        workingCopyRepositoryPath: String?
+    ): String? {
+        var normalized = normalizePathText(rawPath).removePrefix("./").trim('/')
+        if (normalized.isBlank()) return null
+
+        val prefixes = linkedSetOf<String>()
+        workingCopyRepositoryPath
+            ?.let(::normalizePathText)
+            ?.trim('/')
+            ?.takeIf { it.isNotBlank() }
+            ?.let(prefixes::add)
+        workTreeName
+            .trim()
+            .replace('\\', '/')
+            .trim('/')
+            .takeIf { it.isNotBlank() }
+            ?.let(prefixes::add)
+
+        prefixes
+            .sortedByDescending { it.length }
+            .firstOrNull { prefix ->
+                normalized.equals(prefix, ignoreCase = true) ||
+                    normalized.startsWith("$prefix/", ignoreCase = true)
+            }
+            ?.let { prefix ->
+                normalized = if (normalized.length == prefix.length) {
+                    ""
+                } else {
+                    normalized.substring(prefix.length + 1).trim('/')
+                }
+            }
+
+        return normalized.takeIf { it.isNotBlank() }
+    }
+
     fun collectModifiedFilesByDate(workTree: File, since: LocalDate, until: LocalDate): List<String> {
         val basePath = workTree.toPath().toAbsolutePath().normalize()
         return Files.walk(basePath).use { stream ->

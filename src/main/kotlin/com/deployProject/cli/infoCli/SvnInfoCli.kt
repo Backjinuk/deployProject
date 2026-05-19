@@ -32,6 +32,11 @@ class SvnInfoCli {
         }
     }
 
+    private data class WorkingCopyInfo(
+        val url: SVNURL,
+        val repositoryRelativePath: String?
+    )
+
     fun svnCliExecution(
         repoPath: String,
         since: Date,
@@ -108,6 +113,7 @@ class SvnInfoCli {
                 val classEntryCount = (statusEntries + diffEntries).count { it.endsWith(".class", ignoreCase = true) }
                 if (changedSourceCount > 0 && classEntryCount == 0) {
                     log.warn("No class artifacts found for selected SVN revisions.")
+                    System.err.println("[WARN] No class artifacts found for selected SVN revisions.")
                 }
             }
 
@@ -170,11 +176,30 @@ class SvnInfoCli {
         workTreeName: String
     ): DiffSelection {
         val client = createClientManagerWithCachedAuth()
-        val selectedFileSet = selectedFiles.map { normalizePath(it, workTreeName) }.toSet()
+        val workingCopyInfo = resolveWorkingCopyInfo(client, File(root))
+        println(
+            "[INFO] SVN working copy repository path: " +
+                (workingCopyInfo?.repositoryRelativePath?.takeIf { it.isNotBlank() } ?: ".")
+        )
+        val selectedFileSet = selectedFiles
+            .mapNotNull {
+                GitUtil.normalizeSvnRepositoryPath(
+                    rawPath = it,
+                    workTreeName = workTreeName,
+                    workingCopyRepositoryPath = workingCopyInfo?.repositoryRelativePath
+                )
+            }
+            .toSet()
         val normalizedDuplicateMap = duplicateFileVersionMap
-            .mapKeys { normalizePath(it.key, workTreeName) }
-            .mapValues { it.value.trim() }
-            .filterValues { it.isNotEmpty() }
+            .mapNotNull { (path, revision) ->
+                GitUtil.normalizeSvnRepositoryPath(
+                    rawPath = path,
+                    workTreeName = workTreeName,
+                    workingCopyRepositoryPath = workingCopyInfo?.repositoryRelativePath
+                )?.let { normalizedPath -> normalizedPath to revision.trim() }
+            }
+            .filter { (_, revision) -> revision.isNotEmpty() }
+            .toMap()
         val pathCandidates = linkedMapOf<String, MutableList<String>>()
 
         try {
@@ -184,8 +209,12 @@ class SvnInfoCli {
                     val rev = SVNRevision.create(revision)
                     client.logClient.doLog(arrayOf(File(root)), rev, rev, false, true, 1L) { logEntry ->
                         logEntry.changedPaths.values.forEach { change ->
-                            val path = normalizePath(change.path.orEmpty(), workTreeName)
-                            if (path.isNotBlank() && (selectedFileSet.isEmpty() || path in selectedFileSet)) {
+                            val path = GitUtil.normalizeSvnRepositoryPath(
+                                rawPath = change.path.orEmpty(),
+                                workTreeName = workTreeName,
+                                workingCopyRepositoryPath = workingCopyInfo?.repositoryRelativePath
+                            )
+                            if (!path.isNullOrBlank() && (selectedFileSet.isEmpty() || path in selectedFileSet)) {
                                 pathCandidates.getOrPut(path) { mutableListOf() }.add(revisionId)
                             }
                         }
@@ -199,8 +228,12 @@ class SvnInfoCli {
                 client.logClient.doLog(arrayOf(File(root)), normalizedStart, normalizedEnd, false, true, 0L) { logEntry ->
                     val entryRevision = logEntry.revision.toString()
                     logEntry.changedPaths.values.forEach { change ->
-                        val path = normalizePath(change.path.orEmpty(), workTreeName)
-                        if (path.isNotBlank() && (selectedFileSet.isEmpty() || path in selectedFileSet)) {
+                        val path = GitUtil.normalizeSvnRepositoryPath(
+                            rawPath = change.path.orEmpty(),
+                            workTreeName = workTreeName,
+                            workingCopyRepositoryPath = workingCopyInfo?.repositoryRelativePath
+                        )
+                        if (!path.isNullOrBlank() && (selectedFileSet.isEmpty() || path in selectedFileSet)) {
                             pathCandidates.getOrPut(path) { mutableListOf() }.add(entryRevision)
                         }
                     }
@@ -217,6 +250,11 @@ class SvnInfoCli {
             }
         }
 
+        println(
+            "[INFO] SVN diff selection: selectedFiles=${selectedFileSet.size}, " +
+                "candidatePaths=${pathCandidates.size}, selectedPaths=${revisionByPath.size}"
+        )
+
         return DiffSelection(
             paths = revisionByPath.keys.toList(),
             revisionByPath = revisionByPath
@@ -232,15 +270,6 @@ class SvnInfoCli {
         val startNo = start.number
         val endNo = end.number
         return if (startNo >= 0 && endNo >= 0 && startNo > endNo) end to start else start to end
-    }
-
-    private fun normalizePath(path: String, workTreeName: String): String {
-        var normalized = path.replace("\\", "/").removePrefix("/").trim()
-        val rootPrefix = "$workTreeName/"
-        if (normalized.startsWith(rootPrefix, ignoreCase = true)) {
-            normalized = normalized.substring(rootPrefix.length)
-        }
-        return normalized.removePrefix("./")
     }
 
     private fun selectRevisionForPath(
@@ -265,7 +294,7 @@ class SvnInfoCli {
         revisionByPath: Map<String, String>
     ): List<String> {
         val client = createClientManagerWithCachedAuth()
-        val rootUrl = resolveWorkingCopyUrl(client, workTree) ?: return emptyList()
+        val rootUrl = resolveWorkingCopyInfo(client, workTree)?.url ?: return emptyList()
         val writtenEntries = linkedSetOf<String>()
 
         revisionByPath.forEach { (path, revisionText) ->
@@ -273,6 +302,7 @@ class SvnInfoCli {
             val fileBytes = readFileBytesAtRevision(client, rootUrl, path, revisionNo)
             if (fileBytes == null) {
                 log.warn("SVN revision file not found: revision={}, path={}", revisionText, path)
+                System.err.println("[WARN] SVN revision file not found: revision=$revisionText, path=$path")
                 return@forEach
             }
 
@@ -290,7 +320,7 @@ class SvnInfoCli {
         jdkPath: String?
     ): List<String> {
         val client = createClientManagerWithCachedAuth()
-        val rootUrl = resolveWorkingCopyUrl(client, workTree) ?: return emptyList()
+        val rootUrl = resolveWorkingCopyInfo(client, workTree)?.url ?: return emptyList()
         val writtenEntries = linkedSetOf<String>()
 
         revisionByPath.entries
@@ -319,6 +349,12 @@ class SvnInfoCli {
                             paths = mappedEntries,
                             allowBuildArtifacts = true
                         ).toList()
+                        if (actualEntries.isEmpty()) {
+                            System.err.println(
+                                "[WARN] No SVN class artifacts copied: revision=$revisionText, " +
+                                    "sources=${sourcePaths.joinToString(",")}, mapped=${mappedEntries.joinToString(",")}"
+                            )
+                        }
                         GitUtil.addDirectoryEntry(
                             targetDir = outputDir,
                             baseDir = snapshotDir,
@@ -335,9 +371,16 @@ class SvnInfoCli {
         return writtenEntries.toList()
     }
 
-    private fun resolveWorkingCopyUrl(client: SVNClientManager, workTree: File): SVNURL? {
+    private fun resolveWorkingCopyInfo(client: SVNClientManager, workTree: File): WorkingCopyInfo? {
         return runCatching {
-            client.wcClient.doInfo(workTree, SVNRevision.WORKING).url
+            val info = client.wcClient.doInfo(workTree, SVNRevision.WORKING)
+            WorkingCopyInfo(
+                url = info.url,
+                repositoryRelativePath = GitUtil.normalizeSvnWorkingCopyRepositoryPath(
+                    workingCopyUrlPath = info.url.path,
+                    repositoryRootUrlPath = info.repositoryRootURL?.path
+                )
+            )
         }.getOrNull()
     }
 

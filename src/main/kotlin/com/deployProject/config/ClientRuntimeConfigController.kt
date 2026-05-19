@@ -21,14 +21,14 @@ class ClientRuntimeConfigController(
     private val installerDownloadUrl: String
 ) {
     private val defaultApiPort = "9090"
-    private val productionApiBaseUrl = "http://backjin.iptime.org:$defaultApiPort"
+    private val productionPublicBaseUrl = "https://deploy.jinuk.dev"
     private val installerDownloadPath = "/download/deploy-project.exe"
-    private val productionInstallerDownloadBaseUrl = "https://deploy.jinuk.dev"
 
     @GetMapping("/runtime-config.js", produces = ["application/javascript;charset=UTF-8"])
     fun runtimeConfig(request: HttpServletRequest): ResponseEntity<String> {
         val resolvedRemoteApiBaseUrl = remoteApiBaseUrl.trim()
             .ifBlank { defaultApiBaseUrl(request) }
+            .let { forcePublicHttpsUrl(it, request) }
             .trimEnd('/')
         val resolvedInstallerDownloadUrl = installerDownloadUrl.trim()
             .ifBlank {
@@ -75,7 +75,38 @@ class ClientRuntimeConfigController(
         return if (host == "localhost" || host == "127.0.0.1") {
             "http://localhost:$defaultApiPort"
         } else {
-            productionApiBaseUrl
+            publicBaseUrl(request)
+        }
+    }
+
+    private fun publicBaseUrl(request: HttpServletRequest): String {
+        val requestBaseUrl = requestBaseUrl(request).trimEnd('/')
+        if (isLocalRequest(request)) return requestBaseUrl
+
+        val host = requestBaseUrl
+            .substringAfter("://", requestBaseUrl)
+            .substringBefore("/")
+            .substringBefore(":")
+            .lowercase()
+
+        return if (
+            host == "deploy.jinuk.dev" &&
+            requestBaseUrl.startsWith("https://", ignoreCase = true)
+        ) {
+            requestBaseUrl
+        } else {
+            productionPublicBaseUrl
+        }
+    }
+
+    private fun forcePublicHttpsUrl(value: String, request: HttpServletRequest): String {
+        val trimmed = value.trim().trimEnd('/')
+        if (trimmed.isBlank() || isLocalRequest(request)) return trimmed
+
+        return if (trimmed.startsWith("http://", ignoreCase = true)) {
+            publicBaseUrl(request)
+        } else {
+            trimmed
         }
     }
 
@@ -89,7 +120,9 @@ class ClientRuntimeConfigController(
             .trimEnd('/')
 
         return if (pathOnly == installerDownloadPath || pathOnly.endsWith(installerDownloadPath)) {
-            "$productionInstallerDownloadBaseUrl$installerDownloadPath"
+            "${publicBaseUrl(request)}$installerDownloadPath"
+        } else if (trimmed.startsWith("http://", ignoreCase = true)) {
+            trimmed.replaceFirst(Regex("^http://", RegexOption.IGNORE_CASE), "https://")
         } else {
             trimmed
         }

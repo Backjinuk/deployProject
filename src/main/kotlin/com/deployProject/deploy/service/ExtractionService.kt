@@ -8,6 +8,7 @@ import com.deployProject.deploy.domain.extraction.RepositoryVersionFileListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionOptionDto
 import com.deployProject.deploy.domain.extraction.TargetOsStatus
+import com.deployProject.cli.utilCli.GitUtil
 import com.deployProject.cli.utilCli.JarCreator
 import com.deployProject.cli.utilCli.JlinkCreator
 import org.eclipse.jgit.api.Git
@@ -238,7 +239,7 @@ class ExtractionService(
     }
 
     private fun listLocalVersionFiles(workTree: File, sinceDate: LocalDate, untilDate: LocalDate): RepositoryVersionFileListDto {
-        val files = com.deployProject.cli.utilCli.GitUtil.collectModifiedFilesByDate(workTree, sinceDate, untilDate)
+        val files = GitUtil.collectModifiedFilesByDate(workTree, sinceDate, untilDate)
         return RepositoryVersionFileListDto(vcsType = "LOCAL", files = files, duplicateFiles = emptyList())
     }
     private fun listGitVersions(workTree: File, sinceDate: LocalDate, untilDate: LocalDate): RepositoryVersionListDto {
@@ -376,6 +377,7 @@ class ExtractionService(
 
         runCatching {
             val client = createSvnClientManager()
+            val workingCopyRepositoryPath = resolveSvnWorkingCopyRepositoryPath(client, workTree)
             selectedVersions.mapNotNull { it.toLongOrNull() }.distinct().forEach { revision ->
                 val versionId = revision.toString()
                 if (versionId !in resolvedOrder) resolvedOrder.add(versionId)
@@ -402,7 +404,11 @@ class ExtractionService(
                     logEntry.changedPaths.values.forEach { change ->
                         val path = change.path?.trim().orEmpty()
                         if (path.isNotEmpty()) {
-                            val normalized = normalizeRepoRelativePath(path, workTree)
+                            val normalized = GitUtil.normalizeSvnRepositoryPath(
+                                rawPath = path,
+                                workTreeName = workTree.name,
+                                workingCopyRepositoryPath = workingCopyRepositoryPath
+                            )
                             if (normalized != null) {
                                 fileVersionMap.getOrPut(normalized) { linkedSetOf() }.add(versionId)
                             }
@@ -472,6 +478,16 @@ class ExtractionService(
         val opts = SVNWCUtil.createDefaultOptions(configDir, true)
         val auth = SVNWCUtil.createDefaultAuthenticationManager(configDir)
         return SVNClientManager.newInstance(opts, auth)
+    }
+
+    private fun resolveSvnWorkingCopyRepositoryPath(client: SVNClientManager, workTree: File): String? {
+        return runCatching {
+            val info = client.wcClient.doInfo(workTree, SVNRevision.WORKING)
+            GitUtil.normalizeSvnWorkingCopyRepositoryPath(
+                workingCopyUrlPath = info.url.path,
+                repositoryRootUrlPath = info.repositoryRootURL?.path
+            )
+        }.getOrNull()
     }
 
     private fun detectSvnConfigDir(): File {

@@ -31,6 +31,20 @@ object ExtractionLauncher {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val logSession = CliRunLogger.install()
+        try {
+            run(args)
+            println("[INFO] CLI finished successfully")
+        } catch (error: Throwable) {
+            System.err.println("[ERROR] CLI failed: ${error.message}")
+            error.printStackTrace(System.err)
+            throw error
+        } finally {
+            logSession?.close()
+        }
+    }
+
+    private fun run(args: Array<String>) {
         val defaults = loadDefaultsOrNull()
         val repositoryTarget = resolveRepositoryTarget(args, defaults)
         val sinceRaw = firstNonBlank(args.getOrNull(2), defaults?.getProperty("since"))
@@ -56,6 +70,17 @@ object ExtractionLauncher {
         val untilSvn: Date = GitUtil.parseDateArg(untilRaw, svnDateFormat)
         val statusType = GitUtil.parseStatusType(statusTypeRaw)
         val repoPath = repositoryTarget.path.path.replace(File.separator, "/")
+
+        println(
+            "[INFO] CLI start: mode=${repositoryTarget.mode}, repoPath=$repoPath, since=${sinceRaw.orEmpty()}, " +
+                "until=${untilRaw.orEmpty()}, statusType=$statusType, selectedVersions=${selectedVersions.size}, " +
+                "selectedFiles=${selectedFiles.size}, duplicateSelections=${duplicateFileVersionMap.size}, " +
+                "jdkConfigured=${!jdkPath.isNullOrBlank()}, deployServerDir=$deployServerDir"
+        )
+        println(
+            "[INFO] Runtime: os=${System.getProperty("os.name")} ${System.getProperty("os.version")}, " +
+                "java=${System.getProperty("java.version")}, userDir=${System.getProperty("user.dir")}"
+        )
 
         when (repositoryTarget.mode) {
             RepositoryMode.GIT -> {

@@ -61,6 +61,7 @@ class LocalInfoCli {
                 val classEntryCount = entries.count { it.endsWith(".class", ignoreCase = true) }
                 if (changedSourceCount > 0 && classEntryCount == 0) {
                     log.warn("No class artifacts found for selected local files.")
+                    System.err.println("[WARN] No class artifacts found for selected local files.")
                 }
             }
 

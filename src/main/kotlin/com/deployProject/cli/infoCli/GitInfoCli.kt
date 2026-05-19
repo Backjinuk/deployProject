@@ -111,6 +111,7 @@ class GitInfoCli {
                     val classEntryCount = (statusEntries + diffEntries).count { it.endsWith(".class", ignoreCase = true) }
                     if (changedSourceCount > 0 && classEntryCount == 0) {
                         log.warn("No class artifacts found for selected Git revisions.")
+                        System.err.println("[WARN] No class artifacts found for selected Git revisions.")
                     }
                 }
 
@@ -264,6 +265,8 @@ class GitInfoCli {
                         if (fileBytes != null) {
                             GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
                             writtenEntries.add(path)
+                        } else {
+                            System.err.println("[WARN] Git revision file not found: revision=$revisionText, path=$path")
                         }
                     }
 
@@ -276,6 +279,12 @@ class GitInfoCli {
                             paths = mappedEntries,
                             allowBuildArtifacts = true
                         ).toList()
+                        if (actualEntries.isEmpty()) {
+                            System.err.println(
+                                "[WARN] No Git class artifacts copied: revision=$revisionText, " +
+                                    "sources=${sourcePaths.joinToString(",")}, mapped=${mappedEntries.joinToString(",")}"
+                            )
+                        }
                         GitUtil.addDirectoryEntry(
                             targetDir = outputDir,
                             baseDir = snapshotDir,

@@ -50,4 +50,36 @@ class GitUtilArtifactProfileTest {
             rawRoot.deleteRecursively()
         }
     }
+
+    @Test
+    fun `svn working copy path is normalized relative to repository root`() {
+        val normalized = GitUtil.normalizeSvnWorkingCopyRepositoryPath(
+            workingCopyUrlPath = "/svn/company/trunk/project",
+            repositoryRootUrlPath = "/svn/company"
+        )
+
+        assertEquals("trunk/project", normalized)
+    }
+
+    @Test
+    fun `svn repository log path is normalized relative to working copy`() {
+        val normalized = GitUtil.normalizeSvnRepositoryPath(
+            rawPath = "/trunk/project/src/main/java/com/example/Foo.java",
+            workTreeName = "project",
+            workingCopyRepositoryPath = "trunk/project"
+        )
+
+        assertEquals("src/main/java/com/example/Foo.java", normalized)
+    }
+
+    @Test
+    fun `svn repository log path keeps existing working copy relative path`() {
+        val normalized = GitUtil.normalizeSvnRepositoryPath(
+            rawPath = "src/main/java/com/example/Foo.java",
+            workTreeName = "project",
+            workingCopyRepositoryPath = "trunk/project"
+        )
+
+        assertEquals("src/main/java/com/example/Foo.java", normalized)
+    }
 }
