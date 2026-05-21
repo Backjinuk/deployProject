@@ -16,6 +16,17 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+
+data class ExtractionSaveResponse(
+    val fileName: String,
+    val path: String,
+    val size: Long
+)
 
 @RestController
 @RequestMapping("/api/git")
@@ -63,5 +74,61 @@ class GitController(
             .contentType(MediaType.APPLICATION_OCTET_STREAM)
             .contentLength(zipFile.length())
             .body(streamBody)
+    }
+
+    @PostMapping("/extraction/save")
+    fun extractGitInfoToDownloads(@RequestBody dto: ExtractionDto): ExtractionSaveResponse {
+        val zipFile: File = extractionService.extractGitInfo(dto)
+
+        return try {
+            val savedFile = copyToDownloads(zipFile)
+            logger.info("Deploy package saved to local downloads: {}", savedFile.toAbsolutePath())
+
+            ExtractionSaveResponse(
+                fileName = savedFile.fileName.toString(),
+                path = savedFile.toAbsolutePath().normalize().toString(),
+                size = Files.size(savedFile)
+            )
+        } finally {
+            extractionService.cleanupExtractionArtifacts(zipFile)
+        }
+    }
+
+    private fun copyToDownloads(source: File): Path {
+        val homeDir = Path.of(System.getProperty("user.home", "."))
+        val downloadsDir = homeDir.resolve("Downloads")
+        val targetDir = if (Files.exists(downloadsDir) && !Files.isDirectory(downloadsDir)) homeDir else downloadsDir
+
+        Files.createDirectories(targetDir)
+
+        val target = uniqueDownloadTarget(targetDir, source.name)
+        Files.copy(source.toPath(), target, StandardCopyOption.REPLACE_EXISTING)
+
+        return target
+    }
+
+    private fun uniqueDownloadTarget(targetDir: Path, fileName: String): Path {
+        val dotIndex = fileName.lastIndexOf('.')
+        val baseName = if (dotIndex > 0) fileName.substring(0, dotIndex) else fileName
+        val extension = if (dotIndex > 0) fileName.substring(dotIndex) else ""
+
+        val firstCandidate = targetDir.resolve(fileName)
+        if (!Files.exists(firstCandidate)) return firstCandidate
+
+        val timestamp = DOWNLOAD_TIMESTAMP_FORMATTER.format(LocalDateTime.now())
+        var index = 1
+        var candidate: Path
+
+        do {
+            val suffix = if (index == 1) timestamp else "$timestamp-$index"
+            candidate = targetDir.resolve("$baseName-$suffix$extension")
+            index += 1
+        } while (Files.exists(candidate))
+
+        return candidate
+    }
+
+    companion object {
+        private val DOWNLOAD_TIMESTAMP_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
     }
 }

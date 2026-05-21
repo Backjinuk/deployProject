@@ -849,6 +849,19 @@ label,
   background: var(--selection-active-bg);
 }
 
+.date-range-popover .rdp-today:not(.rdp-outside) .rdp-day_button {
+  border-color: rgba(99, 102, 241, 0.58);
+  color: var(--brand-700);
+  background: rgba(99, 102, 241, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.1);
+}
+
+.date-range-popover .rdp-selected.rdp-today .rdp-day_button {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--brand-700), var(--brand-500));
+  box-shadow: 0 8px 16px rgba(59, 130, 246, 0.24);
+}
+
 .date-range-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1286,6 +1299,20 @@ label,
 
 :root[data-theme="dark"] .date-range-popover {
   background: #0f1729;
+}
+
+:root[data-theme="dark"] .date-range-popover .rdp-today:not(.rdp-outside) .rdp-day_button,
+.App[data-theme="dark"] .date-range-popover .rdp-today:not(.rdp-outside) .rdp-day_button {
+  border-color: rgba(139, 147, 255, 0.72);
+  color: #ffffff;
+  background: rgba(99, 102, 241, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(139, 147, 255, 0.18);
+}
+
+:root[data-theme="dark"] .date-range-popover .rdp-selected.rdp-today .rdp-day_button,
+.App[data-theme="dark"] .date-range-popover .rdp-selected.rdp-today .rdp-day_button {
+  background: linear-gradient(135deg, var(--brand-700), var(--brand-500));
+  box-shadow: 0 8px 16px rgba(59, 130, 246, 0.28);
 }
 
 :root[data-theme="dark"] .form-control::placeholder {

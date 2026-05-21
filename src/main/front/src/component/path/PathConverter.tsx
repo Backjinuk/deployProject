@@ -34,6 +34,12 @@ type RepoVersionFileListResponse = {
     duplicateFiles: DuplicateFileItem[];
 };
 
+type ExtractionSaveResponse = {
+    fileName: string;
+    path: string;
+    size: number;
+};
+
 type ActiveDatePicker = "start" | "end" | null;
 
 const collectUniqueDuplicateVersions = (items: DuplicateFileItem[]): RepoVersionOption[] => {
@@ -470,8 +476,8 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     .filter((entry): entry is [string, string] => Boolean(entry[1]))
             );
 
-            const response = await localApi.post(
-                "/api/git/extraction",
+            const response = await localApi.post<ExtractionSaveResponse>(
+                "/api/git/extraction/save",
                 {
                     siteId: site.id,
                     since: startDate ? toLocalDateText(startDate) : null,
@@ -485,39 +491,20 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     selectedFiles: selectedFiles.map(normalizePath),
                     duplicateFileVersionMap: selectedDuplicateVersionMap,
                 },
-                { responseType: "blob", timeout: 1800000 }
+                { timeout: 1800000 }
             );
-
-            const now = new Date().toISOString().replace(/[:.]/g, "-");
-            const disposition = response.headers["content-disposition"];
-            let filename = `deploy-package-${now}.zip`;
-            if (disposition) {
-                const match = disposition.match(/filename="(.+)"/);
-                if (match?.[1]) filename = match[1];
-            }
-
-            const blob = new Blob([response.data], { type: response.headers["content-type"] });
-            const url = URL.createObjectURL(blob);
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = filename;
-            document.body.appendChild(anchor);
-            anchor.click();
-            URL.revokeObjectURL(url);
-            anchor.remove();
 
             await Swal.fire({
                 icon: "success",
-                title: "다운로드 완료",
-                text: filename,
-                timer: 1800,
-                showConfirmButton: false,
+                title: "패키지 생성 완료",
+                text: response.data.path || response.data.fileName,
+                confirmButtonText: "확인",
             });
         } catch (err) {
             console.error("Extraction error:", err);
             await Swal.fire({
                 icon: "error",
-                title: "다운로드 실패",
+                title: "패키지 생성 실패",
                 text: "서버 로그와 입력 조건을 확인해 주세요.",
             });
         } finally {

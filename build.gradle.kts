@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "com.deployproject"
-version = "1.0.32"
+version = "1.0.34"
 
 val hostOsName = System.getProperty("os.name").lowercase()
 val hostOsArch = System.getProperty("os.arch").lowercase()
