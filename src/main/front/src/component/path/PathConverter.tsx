@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { DayPicker } from "react-day-picker";
-import { ko } from "react-day-picker/locale";
+import { ko } from "date-fns/locale/ko";
 import "react-day-picker/style.css";
 import Swal from "sweetalert2";
 
