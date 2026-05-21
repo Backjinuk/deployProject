@@ -1,28 +1,27 @@
 {
   "files": {
-    "main.css": "/static/css/main.e9f6b61a.css",
-    "main.js": "/static/js/main.efe44472.js",
+    "main.css": "/static/css/main.f84de766.css",
+    "main.js": "/static/js/main.bc75b0a3.js",
     "static/js/453.80efc53e.chunk.js": "/static/js/453.80efc53e.chunk.js",
+    "static/media/deploykit-icon.png": "/static/media/deploykit-icon.b4eb15387832071f86b5.png",
     "static/media/guide-main-duplicates.png": "/static/media/guide-main-duplicates.84078b5354f2c80189cc.png",
     "static/media/guide-main-files.png": "/static/media/guide-main-files.423b978318db1fdc8c50.png",
     "static/media/guide-main-empty.png": "/static/media/guide-main-empty.b2d42b72e963e513306c.png",
     "static/media/guide-duplicate-modal.png": "/static/media/guide-duplicate-modal.c83f3810ada6adb7c85b.png",
+    "static/media/deploykit-app-preview.png": "/static/media/deploykit-app-preview.882186d5ec1d1a339ac0.png",
     "static/media/guide-site-select.png": "/static/media/guide-site-select.1b431ad2fca8e8852eda.png",
-    "static/media/guide-login.png": "/static/media/guide-login.05b0b537d2d2a09ecc91.png",
     "static/media/guide-web-extracting.png": "/static/media/guide-web-extracting.6da6b49ba42c8ac222bb.png",
     "static/media/guide-path-register.png": "/static/media/guide-path-register.77be7c5bdd3381bf9b14.png",
-    "static/media/guide-cli-progress.png": "/static/media/guide-cli-progress.bcb6c12ada4ef3ac5993.png",
     "static/media/guide-patch-menu.png": "/static/media/guide-patch-menu.eb3d54f7b83b77a2773b.png",
     "static/media/guide-result-folder.png": "/static/media/guide-result-folder.930f8b5b66047ab7de7c.png",
     "static/media/guide-download-complete.png": "/static/media/guide-download-complete.f48423eea79e26e7258f.png",
-    "static/media/guide-cli-complete.png": "/static/media/guide-cli-complete.eec1a142fd970225af8b.png",
     "index.html": "/index.html",
-    "main.e9f6b61a.css.map": "/static/css/main.e9f6b61a.css.map",
-    "main.efe44472.js.map": "/static/js/main.efe44472.js.map",
+    "main.f84de766.css.map": "/static/css/main.f84de766.css.map",
+    "main.bc75b0a3.js.map": "/static/js/main.bc75b0a3.js.map",
     "453.80efc53e.chunk.js.map": "/static/js/453.80efc53e.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.e9f6b61a.css",
-    "static/js/main.efe44472.js"
+    "static/css/main.f84de766.css",
+    "static/js/main.bc75b0a3.js"
   ]
 }

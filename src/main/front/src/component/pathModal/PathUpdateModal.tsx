@@ -33,9 +33,8 @@ export default function PathUpdateModal({
 
         if (show) {
             document.addEventListener("mousedown", handleClickOutside);
-            const deployUser = JSON.parse(localStorage.getItem("deployUser") || "{}");
             serverApi
-                .post<Site[]>("/api/pathList", deployUser)
+                .get<Site[]>("/api/pathList")
                 .then((res) => setPathList(res.data))
                 .catch((err) => console.error("path list load failed", err));
         }
@@ -89,21 +88,21 @@ export default function PathUpdateModal({
             const currentValue = ((path[key] as string) || "").trim();
 
             return (
-                <div className="input-group mb-3" key={key}>
-                    <span className="input-group-text">{label}</span>
+                <div className="input-group mb-3 dp-path-field" key={key}>
+                    <span className="input-group-text dp-path-label">{label}</span>
                     <input
                         type="text"
-                        className="form-control"
+                        className="form-control dp-path-input"
                         id={`${key}-${path.id}`}
                         placeholder="선택된 경로가 없습니다."
                         value={currentValue}
                         readOnly
                         onClick={() => handleBrowse(path.id as number, key, currentValue, label)}
-                        style={{ cursor: "pointer", backgroundColor: "#ffffff" }}
+                        style={{ cursor: "pointer", backgroundColor: "var(--control-bg)" }}
                     />
                     <button
                         type="button"
-                        className="btn btn-outline-secondary"
+                        className="btn btn-outline-secondary dp-path-browse-btn"
                         onClick={() => handleBrowse(path.id as number, key, currentValue, label)}
                     >
                         폴더 선택
@@ -113,57 +112,55 @@ export default function PathUpdateModal({
         }
 
         return (
-            <div className="input-group mb-3" key={key}>
-                <span className="input-group-text">{label}</span>
-                <div className="form-floating flex-grow-1">
-                    <input
-                        type="text"
-                        className="form-control"
-                        id={`${key}-${path.id}`}
-                        placeholder={label}
-                        value={(path[key] as string) || ""}
-                        onChange={(e) =>
-                            path.id != null && updateFieldLocal(path.id, key, e.currentTarget.value)
-                        }
-                        onBlur={(e) =>
-                            path.id != null && commitFieldUpdate(path.id, key, e.currentTarget.value)
-                        }
-                    />
-                    <label htmlFor={`${key}-${path.id}`}>{label}</label>
-                </div>
+            <div className="input-group mb-3 dp-path-field" key={key}>
+                <span className="input-group-text dp-path-label">{label}</span>
+                <input
+                    type="text"
+                    className="form-control dp-path-input"
+                    id={`${key}-${path.id}`}
+                    placeholder={label}
+                    value={(path[key] as string) || ""}
+                    onChange={(e) =>
+                        path.id != null && updateFieldLocal(path.id, key, e.currentTarget.value)
+                    }
+                    onBlur={(e) =>
+                        path.id != null && commitFieldUpdate(path.id, key, e.currentTarget.value)
+                    }
+                />
             </div>
         );
     };
 
     return (
-        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: "rgba(0, 0, 0, 0.55)" }}>
-            <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: "860px" }} ref={modalRef}>
-                <div className="modal-content">
-                    <div className="modal-header">
+        <div className="modal dp-modal-backdrop" tabIndex={-1} style={{ display: "flex", backgroundColor: "rgba(0, 0, 0, 0.55)" }}>
+            <div
+                className="modal-dialog modal-dialog-centered dp-modal-dialog dp-path-manage-dialog"
+                style={{
+                    width: "min(1189px, 90vw)",
+                    maxWidth: "min(1189px, 90vw)",
+                    flexBasis: "min(1189px, 90vw)",
+                }}
+                ref={modalRef}
+            >
+                <div className="modal-content dp-modal-content">
+                    <div className="modal-header dp-modal-header">
                         <h5 className="modal-title">경로 관리</h5>
                         <button type="button" className="btn-close" aria-label="Close" onClick={onPath} />
                     </div>
 
-                    <div className="modal-body">
+                    <div className="modal-body dp-modal-body dp-path-manage-body">
                         {pathList.map((path) => (
-                            <div key={path.id} className="mb-3">
+                            <div key={path.id} className="mb-3 dp-path-card-shell">
                                 <div
-                                    style={{
-                                        cursor: "pointer",
-                                        fontWeight: 700,
-                                        padding: "0.85rem 1rem",
-                                        backgroundColor: selectedPathId === path.id ? "#e8f0ff" : "#ffffff",
-                                        border: "1px solid #d9e2f0",
-                                        borderRadius: "10px",
-                                        margin: 0,
-                                    }}
+                                    className={`dp-path-list-row${selectedPathId === path.id ? " is-active" : ""}`}
                                     onClick={() =>
                                         setSelectedPathId(selectedPathId === path.id ? null : path.id ?? null)
                                     }
                                 >
-                                    {path.text}
+                                    <span className="dp-path-list-title">{path.text}</span>
                                     <button
-                                        className="btn btn-outline-danger btn-sm float-end"
+                                        type="button"
+                                        className="dp-path-delete-btn"
                                         onClick={async (event) => {
                                             event.stopPropagation();
                                             if (path.id == null) return;
@@ -176,16 +173,9 @@ export default function PathUpdateModal({
                                 </div>
 
                                 <div
-                                    style={{
-                                        maxHeight: selectedPathId === path.id ? "900px" : "0",
-                                        overflow: "hidden",
-                                        transition: "max-height 0.25s ease",
-                                        border: "1px solid #d9e2f0",
-                                        borderTop: "none",
-                                        borderRadius: "0 0 10px 10px",
-                                    }}
+                                    className={`dp-path-fields-panel${selectedPathId === path.id ? " is-open" : ""}`}
                                 >
-                                    <div style={{ padding: "0.9rem 1rem", backgroundColor: "#f8fbff" }}>
+                                    <div className="dp-path-fields-inner">
                                         {fieldDefinitions.map(({ key, label, canBrowse }) =>
                                             renderField(path, key, label, canBrowse)
                                         )}
@@ -195,8 +185,8 @@ export default function PathUpdateModal({
                         ))}
                     </div>
 
-                    <div className="modal-footer">
-                        <button className="btn btn-secondary" onClick={onPath}>
+                    <div className="modal-footer dp-modal-footer">
+                        <button className="btn btn-secondary dp-modal-button dp-modal-button-secondary" onClick={onPath}>
                             닫기
                         </button>
                     </div>

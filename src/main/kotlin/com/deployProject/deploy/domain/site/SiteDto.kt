@@ -1,16 +1,16 @@
 package com.deployProject.deploy.domain.site
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import lombok.Data
 import java.time.LocalDateTime
 
 @Data
+@JsonIgnoreProperties(ignoreUnknown = true)
 open class SiteDto {
 
     var id: Long? = null
 
     var text: String? = null
-
-    var userSeq: Long? = null
 
     /** 운영 서버 홈 디렉토리 */
     var homePath: String? = null

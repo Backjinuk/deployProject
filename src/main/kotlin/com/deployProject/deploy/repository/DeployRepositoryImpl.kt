@@ -1,121 +1,136 @@
 package com.deployProject.deploy.repository
 
-import com.deployProject.deploy.domain.deployUser.DeployUser
-import com.deployProject.deploy.domain.deployUser.DeployUserDto
-import com.deployProject.deploy.domain.site.Site
 import com.deployProject.deploy.domain.site.SiteDto
-import jakarta.persistence.EntityManager
-import jakarta.transaction.Transactional
-import org.modelmapper.ModelMapper
-import org.slf4j.LoggerFactory
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Repository
-import kotlin.jvm.java
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.time.LocalDateTime
 
 @Repository
 class DeployRepositoryImpl(
-    private val entityManager: EntityManager,
-    private val modelMapper: ModelMapper
+    private val objectMapper: ObjectMapper,
+    @Value("\${deploy.storage.sites-file:}")
+    private val configuredSitesFile: String
 ) : DeployRepository {
 
-    private val logger = LoggerFactory.getLogger(DeployRepositoryImpl::class.java);
+    private data class SiteStore(
+        val nextId: Long = 1,
+        val sites: List<SiteDto> = emptyList()
+    )
 
-    override fun getSites(id: Long): List<SiteDto> {
-        logger.info("getSites started")
+    private val lock = Any()
 
-        val query = entityManager.createQuery(
-            "SELECT s " +
-                    "FROM Site s " +
-                    "where s.userSeq = :id " +
-                    "and (s.useYn != 'N' or s.useYn IS NULL)",
-            Site::class.java
-        )
+    override fun getSites(): List<SiteDto> = synchronized(lock) {
+        readStore().sites
+            .filter(::isActive)
+            .sortedWith(compareBy<SiteDto> { it.createdAt ?: LocalDateTime.MIN }.thenBy { it.id ?: Long.MAX_VALUE })
+    }
 
-        query.setParameter("id", id)
+    override fun getPathList(): List<SiteDto> = getSites()
 
-        val map = query.resultList.map { site ->
-            modelMapper.map(site, SiteDto::class.java)
+    override fun savedPath(site: SiteDto) = synchronized(lock) {
+        val store = readStore()
+        val now = LocalDateTime.now()
+        val duplicateSite = if (site.id == null) store.sites.firstOrNull { current ->
+            isActive(current) && hasPathIdentity(current) && hasPathIdentity(site) && pathKey(current) == pathKey(site)
+        } else null
+        val id = site.id ?: duplicateSite?.id ?: store.nextId
+        val saved = site.copyForStorage().apply {
+            this.id = id
+            this.createdAt = site.createdAt ?: duplicateSite?.createdAt ?: now
+            this.updatedAt = now
+            this.useYn = site.useYn?.takeIf { it.isNotBlank() } ?: "Y"
         }
 
-        return map
+        val sites = store.sites
+            .filterNot { it.id == id }
+            .plus(saved)
+        writeStore(SiteStore(nextId = maxOf(store.nextId, id + 1), sites = sites))
     }
 
-    override fun findByUserName(userName: String): DeployUserDto {
-        logger.info("findByUserName started")
-        val query =
-            entityManager.createQuery("SELECT u FROM DeployUser u WHERE u.userName = :userName", DeployUser::class.java)
-        query.setParameter("userName", userName)
-
-        val entity = query.resultList.firstOrNull() ?: return DeployUserDto()
-
-        return modelMapper.map(entity, DeployUserDto::class.java)
-    }
-
-
-    override fun addUser(deployUser: DeployUser) {
-        logger.info("addUser started")
-
-        entityManager.persist(deployUser)
-    }
-
-    override fun getPathList(userSeq: Long): List<SiteDto> {
-        logger.info("getPathList started")
-        val query = entityManager.createQuery(
-            "SELECT s " +
-                    "FROM Site s " +
-                    "WHERE s.userSeq = :userSeq " +
-                    "and (s.useYn != 'N' or s.useYn is null) ",
-            Site::class.java
-        )
-        query.setParameter("userSeq", userSeq)
-
-        return query.resultList.map { site ->
-            modelMapper.map(site, SiteDto::class.java)
-        }
-    }
-
-    @Transactional
-    override fun updatePath(site: Site) {
-        logger.info("updatePath started")
-        // 수정 이유: id 없이 update를 수행하면 WHERE 파라미터 누락으로 실패한다.
+    override fun updatePath(site: SiteDto) = synchronized(lock) {
         val siteId = requireNotNull(site.id) { "site.id is required for updatePath()" }
-
-        val assignments = mutableListOf<String>().apply {
-            site.text?.let { add("s.text      = :text") }
-            site.homePath?.let { add("s.homePath  = :homePath") }
-            site.localPath?.let { add("s.localPath = :localPath") }
-            site.jdkPath?.let { add("s.jdkPath = :jdkPath") }
-            site.useYn?.let { add("s.useYn = :useYn") }
+        val store = readStore()
+        val sites = store.sites.map { current ->
+            if (current.id != siteId) {
+                current
+            } else {
+                current.copyForStorage().apply {
+                    site.text?.let { text = it }
+                    site.homePath?.let { homePath = it }
+                    site.localPath?.let { localPath = it }
+                    site.jdkPath?.let { jdkPath = it }
+                    site.useYn?.let { useYn = it }
+                    updatedAt = LocalDateTime.now()
+                }
+            }
         }
 
-        // 수정할 필드가 없으면 바로 종료
-        if (assignments.isEmpty()) return
+        writeStore(store.copy(sites = sites))
+    }
 
-        // 3) JPQL 생성
-        val jpql = buildString {
-            append("UPDATE Site s SET ")
-            append(assignments.joinToString(", "))
-            append(" WHERE s.id = :id")
+    private fun readStore(): SiteStore {
+        val path = sitesFile()
+        if (!Files.isRegularFile(path)) return SiteStore()
+
+        return runCatching {
+            objectMapper.readValue<SiteStore>(path.toFile())
+        }.getOrElse {
+            SiteStore()
         }
-
-        // 4) Query 생성 및 파라미터 바인딩
-        val query = entityManager.createQuery(jpql)
-        query.setParameter("id", siteId)
-        site.text?.let { query.setParameter("text", it) }
-        site.homePath?.let { query.setParameter("homePath", it) }
-        site.localPath?.let { query.setParameter("localPath", it) }
-        site.jdkPath?.let { query.setParameter("jdkPath", it) }
-        site.useYn?.let { query.setParameter("useYn", it) }
-
-        // 5) 쿼리 실행
-        query.executeUpdate()
-
-        // 6) updatedAt 필드 수동 갱신 (JPQL UPDATE는 이 필드를 건드리지 않으므로)
-        entityManager.flush()
     }
 
-    override fun savedPath(site: Site) {
-        logger.info("savedPath started")
-
-        entityManager.persist(site)
+    private fun writeStore(store: SiteStore) {
+        val path = sitesFile()
+        Files.createDirectories(path.parent)
+        val temp = Files.createTempFile(path.parent, "sites-", ".tmp")
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), store)
+        try {
+            Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING)
+        }
     }
+
+    private fun sitesFile(): Path {
+        val configured = configuredSitesFile.trim()
+        if (configured.isNotBlank()) return Path.of(configured).toAbsolutePath().normalize()
+
+        return Path.of(System.getProperty("user.home"), ".deploy-project", "sites.json")
+            .toAbsolutePath()
+            .normalize()
+    }
+
+    private fun isActive(site: SiteDto): Boolean =
+        !site.useYn.equals("N", ignoreCase = true)
+
+    private fun hasPathIdentity(site: SiteDto): Boolean =
+        !site.text.isNullOrBlank() && !site.homePath.isNullOrBlank() && !site.localPath.isNullOrBlank()
+
+    private fun normalizePathPart(value: String?): String =
+        value.orEmpty().trim().replace('\\', '/').trimEnd('/').lowercase()
+
+    private fun pathKey(site: SiteDto): Triple<String, String, String> =
+        Triple(
+            normalizePathPart(site.text),
+            normalizePathPart(site.homePath),
+            normalizePathPart(site.localPath)
+        )
+
+    private fun SiteDto.copyForStorage(): SiteDto =
+        SiteDto().also { target ->
+            target.id = id
+            target.text = text
+            target.homePath = homePath
+            target.localPath = localPath
+            target.jdkPath = jdkPath
+            target.createdAt = createdAt
+            target.updatedAt = updatedAt
+            target.useYn = useYn
+        }
 }

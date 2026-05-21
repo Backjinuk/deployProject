@@ -1,6 +1,7 @@
 package com.deployProject.cli.utilCli
 
 import com.deployProject.deploy.domain.site.FileStatusType
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.awt.BorderLayout
 import java.awt.Desktop
@@ -54,6 +55,7 @@ object GitUtil {
         RAW_FILE_COPY
     }
 
+    private val suppressProgressDialog = ThreadLocal.withInitial { false }
     private val zippedEntries = mutableSetOf<String>()
     private val zippedEntriesPath = mutableSetOf<String>()
     private var statusClassMap: Map<String, List<String>> = emptyMap()
@@ -115,6 +117,37 @@ object GitUtil {
         }
         candidate.mkdirs()
         return candidate
+    }
+
+    fun <T> withoutProgressDialog(task: () -> T): T {
+        val previous = suppressProgressDialog.get()
+        suppressProgressDialog.set(true)
+        return try {
+            task()
+        } finally {
+            suppressProgressDialog.set(previous)
+        }
+    }
+
+    fun <T> logExtractionPhase(logger: Logger, phase: String, task: () -> T): T {
+        val startedAt = System.currentTimeMillis()
+        return try {
+            task().also {
+                logger.info(
+                    "Deploy extraction phase completed: phase={}, elapsedMs={}",
+                    phase,
+                    System.currentTimeMillis() - startedAt
+                )
+            }
+        } catch (error: Throwable) {
+            logger.warn(
+                "Deploy extraction phase failed: phase={}, elapsedMs={}",
+                phase,
+                System.currentTimeMillis() - startedAt,
+                error
+            )
+            throw error
+        }
     }
 
     fun parseDir(repoPath: String, dirType: String): File {
@@ -251,26 +284,48 @@ object GitUtil {
         }
     }
 
-    fun compileJvmProject(workTree: File, javaHomeOverride: String? = null) {
-        val javaSpec = ProjectJavaInspector.inspect(workTree)
-            ?: error("Unable to detect project Java version from ${workTree.absolutePath}")
+    fun compileJvmProject(
+        workTree: File,
+        javaHomeOverride: String? = null,
+        sourcePaths: List<String> = emptyList()
+    ) {
+        val configuredJavaHome = resolveConfiguredJavaHome(javaHomeOverride)
+        val inspectedJavaSpec = ProjectJavaInspector.inspect(workTree)
+
+        // Revision snapshots from SVN may not contain build metadata. When the
+        // user selected a JDK explicitly, use that JDK as the version source.
+        if (configuredJavaHome != null) {
+            val configuredJavaVersion = readJavaMajorVersion(configuredJavaHome)
+                ?: error("Unable to determine Java version from configured JDK: $configuredJavaHome")
+            val targetJavaVersion = inspectedJavaSpec?.targetJavaVersion
+                ?: inspectedJavaSpec?.buildJavaVersion
+                ?: configuredJavaVersion
+            val detectedFrom = inspectedJavaSpec?.detectedFrom ?: "configured JDK $configuredJavaVersion"
+            if (inspectedJavaSpec == null) {
+                println(
+                    "[WARN] Java version metadata was not found in ${workTree.absolutePath}. " +
+                        "Using configured JDK $configuredJavaVersion for direct compilation."
+                )
+            }
+
+            compileJvmProjectWithDirectJdk(workTree, configuredJavaHome, targetJavaVersion, detectedFrom, sourcePaths)
+            verifyCompiledClasses(workTree, targetJavaVersion)
+            return
+        }
+
+        val javaSpec = inspectedJavaSpec
+            ?: error(
+                "Unable to detect project Java version from ${workTree.absolutePath}. " +
+                    "Configure a JDK path or add Java version metadata such as pom.xml, build.gradle, or .java-version."
+            )
         val targetJavaVersion = javaSpec.targetJavaVersion ?: javaSpec.buildJavaVersion
             ?: error("Unable to determine target Java version from ${javaSpec.detectedFrom}")
         val buildJavaVersion = javaSpec.buildJavaVersion ?: targetJavaVersion
-        val javaHome = resolveConfiguredJavaHome(javaHomeOverride)
-            ?: resolveLocalJavaHome(buildJavaVersion)
+        val javaHome = resolveLocalJavaHome(buildJavaVersion)
             ?: error(
                 "JDK path is not configured and JDK $buildJavaVersion was not found on this machine. " +
                     "Detected from ${javaSpec.detectedFrom} for ${workTree.absolutePath}"
             )
-
-        // When the user explicitly provides a JDK path, prefer direct javac compilation.
-        // This keeps extraction working even when Maven/Gradle are not installed locally.
-        if (!javaHomeOverride.isNullOrBlank()) {
-            compileJvmProjectWithDirectJdk(workTree, javaHome, targetJavaVersion, javaSpec.detectedFrom)
-            verifyCompiledClasses(workTree, targetJavaVersion)
-            return
-        }
 
         val commandResolution = resolveJvmBuildCommand(workTree)
         val command = commandResolution.command
@@ -315,8 +370,10 @@ object GitUtil {
         workTree: File,
         javaHome: Path,
         targetJavaVersion: Int,
-        detectedFrom: String
+        detectedFrom: String,
+        sourcePaths: List<String>
     ) {
+        val basePath = workTree.toPath().toAbsolutePath().normalize()
         val actualJavaVersion = readJavaMajorVersion(javaHome)
             ?: error("Unable to determine Java version from configured JDK: $javaHome")
         require(actualJavaVersion >= targetJavaVersion) {
@@ -324,23 +381,24 @@ object GitUtil {
                 "detected from $detectedFrom for ${workTree.absolutePath}"
         }
 
-        require(!containsKotlinProductionSources(workTree.toPath())) {
+        require(!containsKotlinProductionSources(basePath, sourcePaths)) {
             "Configured JDK path can directly compile Java sources only. " +
                 "Kotlin sources were found in ${workTree.absolutePath}, so Maven/Gradle is still required."
         }
 
-        val javaSources = collectDirectJavaSources(workTree.toPath())
+        val javaSources = collectDirectJavaSources(basePath, sourcePaths)
         require(javaSources.isNotEmpty()) {
             "No production Java source files were found in ${workTree.absolutePath}"
         }
 
-        val outputDir = determineDirectCompileOutputDir(workTree.toPath())
+        val outputDir = determineDirectCompileOutputDir(basePath)
         resetDirectory(outputDir)
-        val classpathEntries = collectLocalCompileClasspath(workTree.toPath(), outputDir)
+        val classpathEntries = collectLocalCompileClasspath(basePath, outputDir)
+        val sourcepathEntries = collectDirectJavaSourceRoots(basePath)
         val javac = javaHome.resolve("bin").resolve(javacExecutableName())
         require(Files.isRegularFile(javac)) { "Configured JDK does not contain javac: $javac" }
 
-        val sourcesArgFile = createJavacSourcesArgFile(workTree.toPath(), javaSources)
+        val sourcesArgFile = createJavacSourcesArgFile(basePath, javaSources)
         try {
             val command = mutableListOf(
                 javac.toString(),
@@ -363,15 +421,20 @@ object GitUtil {
                 command += listOf("-classpath", classpathEntries.joinToString(File.pathSeparator))
             }
 
+            if (sourcepathEntries.isNotEmpty()) {
+                command += listOf("-sourcepath", sourcepathEntries.joinToString(File.pathSeparator))
+            }
+
             command += "@${sourcesArgFile.toAbsolutePath()}"
 
             log.info(
-                "Compiling JVM artifacts in {} with direct javac, detectedFrom={}, targetJavaVersion={}, javaHome={}, sources={}, classpathEntries={}",
+                "Compiling JVM artifacts in {} with direct javac, detectedFrom={}, targetJavaVersion={}, javaHome={}, sources={}, requestedSources={}, classpathEntries={}",
                 workTree.absolutePath,
                 detectedFrom,
                 targetJavaVersion,
                 javaHome,
                 javaSources.size,
+                sourcePaths.size,
                 classpathEntries.size
             )
 
@@ -601,9 +664,10 @@ object GitUtil {
         title: String = "배포 파일 생성",
         initialMessage: String = "작업을 진행하고 있습니다.",
         detailMessage: String = "변경 파일 정리, 산출물 생성, 패치 스크립트 생성을 진행합니다.",
+        showDialog: Boolean = true,
         task: () -> Unit
     ) {
-        if (GraphicsEnvironment.isHeadless()) {
+        if (suppressProgressDialog.get() || !showDialog || GraphicsEnvironment.isHeadless()) {
             task()
             return
         }
@@ -692,6 +756,11 @@ object GitUtil {
         outputDir: File,
         completionMessage: String = "배포 파일 생성이 완료되었습니다."
     ) {
+        if (suppressProgressDialog.get()) {
+            println("$completionMessage\n경로: ${outputDir.canonicalFile.absolutePath}")
+            return
+        }
+
         val targetDir = outputDir.canonicalFile
         val opened = openDirectoryInFileManager(targetDir)
         val message = if (opened) {
@@ -845,7 +914,16 @@ object GitUtil {
         }
     }
 
-    private fun containsKotlinProductionSources(basePath: Path): Boolean {
+    private fun containsKotlinProductionSources(basePath: Path, sourcePaths: List<String> = emptyList()): Boolean {
+        if (sourcePaths.isNotEmpty()) {
+            return sourcePaths
+                .filter { it.endsWith(".kt", ignoreCase = true) }
+                .mapNotNull { resolveRequestedSourcePath(basePath, it) }
+                .filter { Files.isRegularFile(it) }
+                .map { relativePathText(basePath, it) }
+                .any { !isExcludedDirectCompileSource(it) }
+        }
+
         return Files.walk(basePath).use { stream ->
             stream.filter(Files::isRegularFile)
                 .filter { !shouldIgnore(basePath, it, allowBuildArtifacts = true) }
@@ -856,14 +934,22 @@ object GitUtil {
         }
     }
 
-    private fun collectDirectJavaSources(basePath: Path): List<Path> {
-        val preferredRoots = listOf(
-            basePath.resolve("src").resolve("main").resolve("java"),
-            basePath.resolve("src").resolve("java"),
-            basePath.resolve("main").resolve("java")
-        ).filter { Files.isDirectory(it) }
+    private fun collectDirectJavaSources(basePath: Path, sourcePaths: List<String> = emptyList()): List<Path> {
+        val requestedSources = sourcePaths
+            .asSequence()
+            .filter { it.endsWith(".java", ignoreCase = true) }
+            .mapNotNull { resolveRequestedSourcePath(basePath, it) }
+            .filter { Files.isRegularFile(it) }
+            .filter { !shouldIgnore(basePath, it, allowBuildArtifacts = true) }
+            .filter { !isExcludedDirectCompileSource(relativePathText(basePath, it)) }
+            .distinct()
+            .toList()
 
-        val candidateRoots = if (preferredRoots.isNotEmpty()) preferredRoots else listOf(basePath)
+        if (requestedSources.isNotEmpty()) {
+            return requestedSources
+        }
+
+        val candidateRoots = collectDirectJavaSourceRoots(basePath)
 
         return candidateRoots.flatMap { root ->
             Files.walk(root).use { stream ->
@@ -871,12 +957,44 @@ object GitUtil {
                     .filter { it.toString().endsWith(".java", ignoreCase = true) }
                     .filter { !shouldIgnore(basePath, it, allowBuildArtifacts = true) }
                     .filter {
-                        val relative = basePath.relativize(it.normalize()).toString().replace(File.separatorChar, '/')
+                        val relative = relativePathText(basePath, it)
                         !isExcludedDirectCompileSource(relative)
                     }
                     .toList()
             }
         }.distinct()
+    }
+
+    private fun collectDirectJavaSourceRoots(basePath: Path): List<Path> {
+        val preferredRoots = listOf(
+            basePath.resolve("src").resolve("main").resolve("java"),
+            basePath.resolve("src").resolve("java"),
+            basePath.resolve("main").resolve("java")
+        ).filter { Files.isDirectory(it) }
+
+        return if (preferredRoots.isNotEmpty()) preferredRoots else listOf(basePath)
+    }
+
+    private fun resolveRequestedSourcePath(basePath: Path, rawPath: String): Path? {
+        val normalizedBase = basePath.toAbsolutePath().normalize()
+        val trimmed = rawPath.trim()
+        if (trimmed.isBlank()) return null
+
+        val path = runCatching { Paths.get(trimmed) }.getOrNull() ?: return null
+        val resolved = if (path.isAbsolute) {
+            path
+        } else {
+            normalizedBase.resolve(trimmed.replace('\\', '/').removePrefix("/"))
+        }.toAbsolutePath().normalize()
+
+        return resolved.takeIf { it.startsWith(normalizedBase) }
+    }
+
+    private fun relativePathText(basePath: Path, path: Path): String {
+        return basePath.toAbsolutePath().normalize()
+            .relativize(path.toAbsolutePath().normalize())
+            .toString()
+            .replace(File.separatorChar, '/')
     }
 
     private fun isExcludedDirectCompileSource(relativePath: String): Boolean {
@@ -896,7 +1014,7 @@ object GitUtil {
             listOf("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
                 .any { Files.isRegularFile(basePath.resolve(it)) } ->
                 basePath.resolve("build").resolve("classes").resolve("java").resolve("main")
-            else -> basePath.resolve("build").resolve("classes")
+            else -> basePath.resolve("target").resolve("classes")
         }
     }
 

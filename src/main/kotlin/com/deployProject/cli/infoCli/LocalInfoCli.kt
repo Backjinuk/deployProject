@@ -18,11 +18,13 @@ class LocalInfoCli {
         fileStatusType: FileStatusType,
         deployServerDir: String,
         jdkPath: String?,
-        selectedFiles: List<String>
-    ) {
+        selectedFiles: List<String>,
+        requestedOutputDir: File? = null
+    ): File {
         val workTree = File(repoPath).canonicalFile.let { if (it.isDirectory) it else it.parentFile }
             ?: error("Local path is invalid: $repoPath")
-        val outputDir = GitUtil.determineDesktopOutputDir()
+        val resolvedOutputDir = requestedOutputDir ?: GitUtil.determineDesktopOutputDir()
+        val outputDir = resolvedOutputDir
         val artifactProfile = GitUtil.resolveArtifactProfile(workTree)
         val allowBuildArtifacts = GitUtil.profileUsesBuildArtifacts(artifactProfile)
 
@@ -31,29 +33,36 @@ class LocalInfoCli {
             initialMessage = "로컬 변경 파일을 정리하고 있습니다.",
             detailMessage = "수정일 기준 파일 수집, 클래스 생성, 패치 스크립트 생성을 진행합니다."
         ) {
-            val modifiedFiles = GitUtil.collectModifiedFilesByDate(workTree, since, until)
-            val selectedPathSet = selectedFiles
-                .map { it.trim().replace("\\", "/").removePrefix("/") }
-                .filter { it.isNotEmpty() }
-                .toSet()
+            val targetPaths = GitUtil.logExtractionPhase(log, "local.collect-target-paths") {
+                val selectedPathSet = selectedFiles
+                    .map { it.trim().replace("\\", "/").removePrefix("/") }
+                    .filter { it.isNotEmpty() }
+                    .toSet()
 
-            val targetPaths = when {
-                !fileStatusType.allowsStatus() && selectedPathSet.isEmpty() -> emptyList()
-                selectedPathSet.isNotEmpty() -> modifiedFiles.filter { it in selectedPathSet }
-                else -> modifiedFiles
+                when {
+                    selectedPathSet.isNotEmpty() -> selectedPathSet.toList()
+                    !fileStatusType.allowsStatus() -> emptyList()
+                    else -> GitUtil.collectModifiedFilesByDate(workTree, since, until)
+                }
             }
 
             val entries = if (targetPaths.isEmpty()) {
                 emptyList()
             } else {
                 if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY && targetPaths.any(::isJvmSourcePath)) {
-                    GitUtil.compileJvmProject(workTree, jdkPath)
+                    GitUtil.logExtractionPhase(log, "local.compile-jvm") {
+                        GitUtil.compileJvmProject(workTree, jdkPath, targetPaths)
+                    }
                 }
-                GitUtil.buildLatestClassMap(workTree, targetPaths)
-                GitUtil.normalizeExtractionPaths(
-                    workTree,
-                    GitUtil.mapPathsForExtraction(targetPaths, artifactProfile)
-                )
+                GitUtil.logExtractionPhase(log, "local.build-class-map") {
+                    GitUtil.buildLatestClassMap(workTree, targetPaths)
+                }
+                GitUtil.logExtractionPhase(log, "local.map-extraction-paths") {
+                    GitUtil.normalizeExtractionPaths(
+                        workTree,
+                        GitUtil.mapPathsForExtraction(targetPaths, artifactProfile)
+                    )
+                }
             }
 
             if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY) {
@@ -65,18 +74,23 @@ class LocalInfoCli {
                 }
             }
 
-            GitUtil.addDirectoryEntry(outputDir, workTree, entries, allowBuildArtifacts)
-
-            DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
-                GitUtil.writeTextOutputFile(outputDir, name, lines.joinToString("\n"))
+            GitUtil.logExtractionPhase(log, "local.copy-output-files") {
+                GitUtil.addDirectoryEntry(resolvedOutputDir, workTree, entries, allowBuildArtifacts)
             }
 
-            log.info("Created output directory: {}", outputDir.absolutePath)
+            GitUtil.logExtractionPhase(log, "local.write-deploy-scripts") {
+                DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
+                    GitUtil.writeTextOutputFile(resolvedOutputDir, name, lines.joinToString("\n"))
+                }
+            }
+
+            log.info("Created output directory: {}", resolvedOutputDir.absolutePath)
             println("LOCAL artifact profile: ${artifactProfile.name}")
             println("LOCAL extraction summary: files=${entries.size}, selected=${targetPaths.size}")
-            println("Extraction directory created: ${outputDir.absolutePath}")
+            println("Extraction directory created: ${resolvedOutputDir.absolutePath}")
         }
         GitUtil.notifyCompletionAndOpenDirectory(outputDir, "배포 파일 생성이 완료되었습니다.")
+        return resolvedOutputDir
     }
 
     private fun isJvmSourcePath(path: String): Boolean =

@@ -1,7 +1,9 @@
 package com.deployProject.config
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.boot.info.BuildProperties
 import org.springframework.http.CacheControl
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -11,36 +13,31 @@ import jakarta.servlet.http.HttpServletRequest
 @RestController
 class ClientRuntimeConfigController(
     private val objectMapper: ObjectMapper,
+    buildPropertiesProvider: ObjectProvider<BuildProperties>,
     @Value("\${deploy.client.ui-mode:APP}")
     private val uiMode: String,
-    @Value("\${deploy.client.server-api-mode:LOCAL}")
-    private val serverApiMode: String,
-    @Value("\${deploy.client.remote-api-base-url:}")
-    private val remoteApiBaseUrl: String,
     @Value("\${deploy.client.installer-download-url:}")
-    private val installerDownloadUrl: String
+    private val installerDownloadUrl: String,
+    @Value("\${deploy.client.latest-version-url:}")
+    private val latestVersionUrl: String
 ) {
-    private val defaultApiPort = "9090"
-    private val productionPublicBaseUrl = "https://deploy.jinuk.dev"
-    private val installerDownloadPath = "/download/deploy-project.exe"
+    private val buildProperties = buildPropertiesProvider.ifAvailable
+    private val productionPublicBaseUrl = "https://deploy.jinukl.dev"
+    private val installerDownloadPath = "/download/deploykit.exe"
 
     @GetMapping("/runtime-config.js", produces = ["application/javascript;charset=UTF-8"])
     fun runtimeConfig(request: HttpServletRequest): ResponseEntity<String> {
-        val resolvedRemoteApiBaseUrl = remoteApiBaseUrl.trim()
-            .ifBlank { defaultApiBaseUrl(request) }
-            .let { forcePublicHttpsUrl(it, request) }
-            .trimEnd('/')
         val resolvedInstallerDownloadUrl = installerDownloadUrl.trim()
             .ifBlank {
-                "$resolvedRemoteApiBaseUrl$installerDownloadPath"
+                "${publicBaseUrl(request)}$installerDownloadPath"
             }
             .let { forceProductionInstallerDownloadUrl(it, request) }
 
         val config = mapOf(
             "uiMode" to uiMode.trim().uppercase(),
-            "serverApiMode" to serverApiMode.trim().uppercase(),
-            "remoteApiBaseUrl" to resolvedRemoteApiBaseUrl,
-            "installerDownloadUrl" to resolvedInstallerDownloadUrl
+            "installerDownloadUrl" to resolvedInstallerDownloadUrl,
+            "appVersion" to (buildProperties?.version ?: ""),
+            "latestVersionUrl" to latestVersionUrl.trim().ifBlank { "$productionPublicBaseUrl/version.json" }
         )
         val script = "window.__DEPLOY_PROJECT_CONFIG__ = ${objectMapper.writeValueAsString(config)};"
 
@@ -64,21 +61,6 @@ class ClientRuntimeConfigController(
         return "$scheme://$host"
     }
 
-    private fun defaultApiBaseUrl(request: HttpServletRequest): String {
-        val requestBaseUrl = requestBaseUrl(request)
-        val host = requestBaseUrl
-            .substringAfter("://", requestBaseUrl)
-            .substringBefore("/")
-            .substringBefore(":")
-            .lowercase()
-
-        return if (host == "localhost" || host == "127.0.0.1") {
-            "http://localhost:$defaultApiPort"
-        } else {
-            publicBaseUrl(request)
-        }
-    }
-
     private fun publicBaseUrl(request: HttpServletRequest): String {
         val requestBaseUrl = requestBaseUrl(request).trimEnd('/')
         if (isLocalRequest(request)) return requestBaseUrl
@@ -96,17 +78,6 @@ class ClientRuntimeConfigController(
             requestBaseUrl
         } else {
             productionPublicBaseUrl
-        }
-    }
-
-    private fun forcePublicHttpsUrl(value: String, request: HttpServletRequest): String {
-        val trimmed = value.trim().trimEnd('/')
-        if (trimmed.isBlank() || isLocalRequest(request)) return trimmed
-
-        return if (trimmed.startsWith("http://", ignoreCase = true)) {
-            publicBaseUrl(request)
-        } else {
-            trimmed
         }
     }
 

@@ -48,12 +48,13 @@ class SvnInfoCli {
         untilVersion: String?,
         selectedVersions: List<String>,
         selectedFiles: List<String>,
-        duplicateFileVersionMap: Map<String, String>
-    ) {
+        duplicateFileVersionMap: Map<String, String>,
+        requestedOutputDir: File? = null
+    ): File {
         val svnDir = GitUtil.parseDir(repoPath, "svn")
         val workTree = if (svnDir.name == ".svn") svnDir.parentFile else svnDir
         val workTreeName = workTree.name
-        val outputDir = GitUtil.determineDesktopOutputDir()
+        val outputDir = requestedOutputDir ?: GitUtil.determineDesktopOutputDir()
         val artifactProfile = GitUtil.resolveArtifactProfile(workTree)
         val allowBuildArtifacts = GitUtil.profileUsesBuildArtifacts(artifactProfile)
 
@@ -62,49 +63,61 @@ class SvnInfoCli {
             initialMessage = "SVN 변경 파일을 정리하고 있습니다.",
             detailMessage = "선택한 리비전 기준 파일 수집, 클래스 생성, 패치 스크립트 생성을 진행합니다."
         ) {
-            val statusPaths = if (fileStatusType.allowsStatus()) {
-                collectStatusPaths(workTree.path, since, until)
-            } else {
-                emptyList()
+            val statusPaths = GitUtil.logExtractionPhase(log, "svn.collect-status-paths") {
+                if (fileStatusType.allowsStatus()) {
+                    collectStatusPaths(workTree.path, since, until)
+                } else {
+                    emptyList()
+                }
             }
 
-            val diffSelection = if (fileStatusType.allowsDiff()) {
-                collectDiffSelection(
-                    root = workTree.path,
-                    start = since,
-                    end = until,
-                    sinceVersion = sinceVersion,
-                    untilVersion = untilVersion,
-                    selectedVersions = selectedVersions,
-                    selectedFiles = selectedFiles,
-                    duplicateFileVersionMap = duplicateFileVersionMap,
-                    workTreeName = workTreeName
-                )
-            } else {
-                DiffSelection.EMPTY
+            val diffSelection = GitUtil.logExtractionPhase(log, "svn.collect-diff-selection") {
+                if (fileStatusType.allowsDiff()) {
+                    collectDiffSelection(
+                        root = workTree.path,
+                        start = since,
+                        end = until,
+                        sinceVersion = sinceVersion,
+                        untilVersion = untilVersion,
+                        selectedVersions = selectedVersions,
+                        selectedFiles = selectedFiles,
+                        duplicateFileVersionMap = duplicateFileVersionMap,
+                        workTreeName = workTreeName
+                    )
+                } else {
+                    DiffSelection.EMPTY
+                }
             }
 
             val statusEntries = if (statusPaths.isEmpty()) {
                 emptyList()
             } else {
                 if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY && statusPaths.any(::isJvmSourcePath)) {
-                    GitUtil.compileJvmProject(workTree, jdkPath)
+                    GitUtil.logExtractionPhase(log, "svn.compile-status-jvm") {
+                        GitUtil.compileJvmProject(workTree, jdkPath, statusPaths)
+                    }
                 }
-                GitUtil.buildLatestClassMap(workTree, statusPaths)
-                GitUtil.normalizeExtractionPaths(
-                    workTree,
-                    GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
-                )
+                GitUtil.logExtractionPhase(log, "svn.build-status-class-map") {
+                    GitUtil.buildLatestClassMap(workTree, statusPaths)
+                }
+                GitUtil.logExtractionPhase(log, "svn.map-status-extraction-paths") {
+                    GitUtil.normalizeExtractionPaths(
+                        workTree,
+                        GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
+                    )
+                }
             }
 
             val diffEntries = if (diffSelection.paths.isEmpty()) {
                 emptyList()
             } else {
-                when (artifactProfile) {
-                    GitUtil.ArtifactProfile.RAW_FILE_COPY ->
-                        writeSelectedRevisionRawFiles(outputDir, workTree, diffSelection.revisionByPath)
-                    GitUtil.ArtifactProfile.JVM_CLASS_ONLY ->
-                        writeSelectedRevisionArtifacts(outputDir, workTree, diffSelection.revisionByPath, jdkPath)
+                GitUtil.logExtractionPhase(log, "svn.write-diff-entries") {
+                    when (artifactProfile) {
+                        GitUtil.ArtifactProfile.RAW_FILE_COPY ->
+                            writeSelectedRevisionRawFiles(outputDir, workTree, diffSelection.revisionByPath)
+                        GitUtil.ArtifactProfile.JVM_CLASS_ONLY ->
+                            writeSelectedRevisionArtifacts(outputDir, workTree, diffSelection.revisionByPath, jdkPath)
+                    }
                 }
             }
 
@@ -120,12 +133,16 @@ class SvnInfoCli {
             if (fileStatusType.allowsStatus()) {
                 val selectedDiffEntrySet = diffEntries.toSet()
                 val statusEntriesToCopy = statusEntries.filterNot { it in selectedDiffEntrySet }
-                GitUtil.addDirectoryEntry(outputDir, workTree, statusEntriesToCopy, allowBuildArtifacts)
+                GitUtil.logExtractionPhase(log, "svn.copy-status-output-files") {
+                    GitUtil.addDirectoryEntry(outputDir, workTree, statusEntriesToCopy, allowBuildArtifacts)
+                }
             }
 
             val entries = (statusEntries + diffEntries).distinct()
-            DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
-                GitUtil.writeTextOutputFile(outputDir, name, lines.joinToString("\n"))
+            GitUtil.logExtractionPhase(log, "svn.write-deploy-scripts") {
+                DeployCliScript().createDeployScript(entries, deployServerDir).forEach { (name, lines) ->
+                    GitUtil.writeTextOutputFile(outputDir, name, lines.joinToString("\n"))
+                }
             }
 
             log.info("Created output directory: {}", outputDir.absolutePath)
@@ -135,6 +152,7 @@ class SvnInfoCli {
             println("Extraction directory created: ${outputDir.absolutePath}")
         }
         GitUtil.notifyCompletionAndOpenDirectory(outputDir, "SVN 배포 파일 생성이 완료되었습니다.")
+        return outputDir
     }
 
     private fun collectStatusPaths(root: String, since: Date, until: Date): List<String> {
@@ -329,38 +347,52 @@ class SvnInfoCli {
                 val revisionNo = revisionText.toLongOrNull() ?: return@forEach
                 val snapshotDir = Files.createTempDirectory("deploy-svn-revision-").toFile()
                 try {
-                    exportRevisionSnapshot(client, rootUrl, revisionNo, snapshotDir)
+                    GitUtil.logExtractionPhase(log, "svn.export-revision-snapshot[$revisionText]") {
+                        exportRevisionSnapshot(client, rootUrl, revisionNo, snapshotDir)
+                    }
 
                     val sourcePaths = paths.filter(::isJvmSourcePath)
                     val rawPaths = paths.filterNot(::isJvmSourcePath)
 
                     if (rawPaths.isNotEmpty()) {
-                        val rawEntries = GitUtil.addZipEntryName(snapshotDir, rawPaths).toList()
-                        GitUtil.addDirectoryEntry(outputDir, snapshotDir, rawPaths)
+                        val rawEntries = GitUtil.logExtractionPhase(log, "svn.collect-revision-raw-entries[$revisionText]") {
+                            GitUtil.addZipEntryName(snapshotDir, rawPaths).toList()
+                        }
+                        GitUtil.logExtractionPhase(log, "svn.copy-revision-raw-files[$revisionText]") {
+                            GitUtil.addDirectoryEntry(outputDir, snapshotDir, rawPaths)
+                        }
                         writtenEntries.addAll(rawEntries)
                     }
 
                     if (sourcePaths.isNotEmpty()) {
-                        GitUtil.compileJvmProject(snapshotDir, jdkPath)
-                        GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+                        GitUtil.logExtractionPhase(log, "svn.compile-revision-jvm[$revisionText]") {
+                            GitUtil.compileJvmProject(snapshotDir, jdkPath, sourcePaths)
+                        }
+                        GitUtil.logExtractionPhase(log, "svn.build-revision-class-map[$revisionText]") {
+                            GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+                        }
                         val mappedEntries = GitUtil.mapPathsForExtraction(sourcePaths, GitUtil.ArtifactProfile.JVM_CLASS_ONLY)
-                        val actualEntries = GitUtil.addZipEntryName(
-                            baseDir = snapshotDir,
-                            paths = mappedEntries,
-                            allowBuildArtifacts = true
-                        ).toList()
+                        val actualEntries = GitUtil.logExtractionPhase(log, "svn.collect-revision-artifact-entries[$revisionText]") {
+                            GitUtil.addZipEntryName(
+                                baseDir = snapshotDir,
+                                paths = mappedEntries,
+                                allowBuildArtifacts = true
+                            ).toList()
+                        }
                         if (actualEntries.isEmpty()) {
                             System.err.println(
                                 "[WARN] No SVN class artifacts copied: revision=$revisionText, " +
                                     "sources=${sourcePaths.joinToString(",")}, mapped=${mappedEntries.joinToString(",")}"
                             )
                         }
-                        GitUtil.addDirectoryEntry(
-                            targetDir = outputDir,
-                            baseDir = snapshotDir,
-                            paths = mappedEntries,
-                            allowBuildArtifacts = true
-                        )
+                        GitUtil.logExtractionPhase(log, "svn.copy-revision-artifacts[$revisionText]") {
+                            GitUtil.addDirectoryEntry(
+                                targetDir = outputDir,
+                                baseDir = snapshotDir,
+                                paths = mappedEntries,
+                                allowBuildArtifacts = true
+                            )
+                        }
                         writtenEntries.addAll(actualEntries)
                     }
                 } finally {

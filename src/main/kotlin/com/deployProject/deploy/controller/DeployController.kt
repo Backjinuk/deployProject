@@ -1,6 +1,5 @@
 package com.deployProject.deploy.controller
 
-import com.deployProject.deploy.domain.deployUser.DeployUserDto
 import com.deployProject.deploy.domain.site.DirectoryPickerRequestDto
 import com.deployProject.deploy.domain.site.DirectoryPickerResponseDto
 import com.deployProject.deploy.domain.site.SiteDto
@@ -21,18 +20,13 @@ class DeployController(
 ) {
 
     @RequestMapping("/api/sites")
-    fun getSites(@RequestBody deployUserDto : DeployUserDto): List<SiteDto> {
-       return deployService.getSites( deployUserDto.id);
-    }
-
-   @RequestMapping("/api/login")
-   fun login (@RequestBody deployUserDto : DeployUserDto): DeployUserDto {
-       return deployService.login(deployUserDto)
+    fun getSites(): List<SiteDto> {
+       return deployService.getSites()
    }
 
     @RequestMapping("/api/pathList")
-    fun logout (@RequestBody deployUserDto : DeployUserDto): List<SiteDto >{
-       return deployService.getPathList(deployUserDto.id)
+    fun pathList(): List<SiteDto> {
+       return deployService.getPathList()
     }
 
     @RequestMapping("/api/updatePath")

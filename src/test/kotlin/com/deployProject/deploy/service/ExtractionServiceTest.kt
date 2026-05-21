@@ -1,15 +1,53 @@
 package com.deployProject.deploy.service
 
 import com.deployProject.deploy.domain.extraction.ExtractionDto
+import com.deployProject.deploy.domain.extraction.TargetOsStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.Path
+import java.time.LocalDate
 import java.util.UUID
+import java.util.zip.ZipFile
 
 class ExtractionServiceTest {
+
+    @Test
+    fun `extractGitInfo returns final package without executable bundle`(@TempDir tempDir: Path) {
+        val sourceRoot = tempDir.resolve("source").toFile().apply { mkdirs() }
+        val changedFile = File(sourceRoot, "src/main/webapp/index.jsp").apply {
+            parentFile.mkdirs()
+            writeText("changed")
+        }
+
+        val extractionService = ExtractionService()
+        val today = LocalDate.now().toString()
+        val zipFile = extractionService.extractGitInfo(
+            ExtractionDto().apply {
+                localPath = sourceRoot.absolutePath
+                homePath = tempDir.resolve("server").toString()
+                since = today
+                until = today
+                fileStatusType = "STATUS"
+                targetOs = TargetOsStatus.WINDOWS
+                selectedFiles = listOf("src/main/webapp/index.jsp")
+            }
+        )
+
+        assertTrue(zipFile.name.startsWith("deploy-package-windows"))
+        ZipFile(zipFile).use { zip ->
+            val entries = zip.entries().asSequence().map { it.name }.toSet()
+            assertTrue(changedFile.exists())
+            assertTrue("src/main/webapp/index.jsp" in entries)
+            assertTrue("patch.sh" in entries)
+            assertFalse(entries.any { it.endsWith(".exe", ignoreCase = true) })
+            assertFalse(entries.any { it == "deploy-project-cli.jar" })
+        }
+    }
 
     @Test
     fun `print extract target files with image conditions without zip`() {

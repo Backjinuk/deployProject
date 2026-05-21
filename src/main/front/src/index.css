@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap");
 
 *,
 *::before,
@@ -14,7 +14,7 @@ body,
 }
 
 body {
-  font-family: "Plus Jakarta Sans", "Noto Sans KR", "Segoe UI", sans-serif;
+  font-family: "Noto Sans KR", "Malgun Gothic", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text-900);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

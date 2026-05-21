@@ -29,7 +29,8 @@ data class InstallerCandidateStatus(
     val path: String,
     val exists: Boolean,
     val regularFile: Boolean,
-    val size: Long?
+    val size: Long?,
+    val lastModified: String?
 )
 
 @RestController
@@ -42,12 +43,12 @@ class DownloadController(
     private val installerFileName: String
 ) {
 
-    @GetMapping("/download/deploy-project.exe")
+    @GetMapping("/download/deploykit.exe", "/download/deploy-project.exe")
     fun downloadInstaller(): ResponseEntity<Any> {
         val path = resolveInstallerPath()
         if (path == null) {
             return ResponseEntity.notFound()
-                .header("X-DeployProject-Error", "Installer file not found")
+                .header("X-DeployKit-Error", "Installer file not found")
                 .build()
         }
 
@@ -82,7 +83,8 @@ class DownloadController(
                     path = candidate.toString(),
                     exists = Files.exists(candidate),
                     regularFile = regularFile,
-                    size = if (regularFile) Files.size(candidate) else null
+                    size = if (regularFile) Files.size(candidate) else null,
+                    lastModified = if (regularFile) Files.getLastModifiedTime(candidate).toString() else null
                 )
             }
         )
@@ -97,13 +99,16 @@ class DownloadController(
         configuredInstallerPaths().forEach { candidates.add(it) }
         configuredInstallerDirs().forEach { installerDir ->
             findLatestInstallerInDir(installerDir)?.let { candidates.add(it) }
+            candidates.add(installerDir.resolve("DeployKit.exe").normalize())
             candidates.add(installerDir.resolve("DeployProject.exe").normalize())
         }
 
         baseDirs().forEach { baseDir ->
             findLatestJpackageInstaller(baseDir)?.let { candidates.add(it) }
+            candidates.add(baseDir.resolve("build/download/DeployKit.exe").normalize())
             candidates.add(baseDir.resolve("build/download/DeployProject.exe").normalize())
             findLatestInstallerInDir(baseDir.resolve("download"))?.let { candidates.add(it) }
+            candidates.add(baseDir.resolve("download/DeployKit.exe").normalize())
             candidates.add(baseDir.resolve("download/DeployProject.exe").normalize())
         }
 
@@ -147,7 +152,12 @@ class DownloadController(
         return Files.list(dir).use { paths ->
             paths
                 .filter { Files.isRegularFile(it) }
-                .filter { it.name == "DeployProject.exe" || (it.name.startsWith("DeployProject-") && it.name.endsWith(".exe")) }
+                .filter {
+                    it.name == "DeployKit.exe" ||
+                        it.name == "DeployProject.exe" ||
+                        (it.name.startsWith("DeployKit-") && it.name.endsWith(".exe")) ||
+                        (it.name.startsWith("DeployProject-") && it.name.endsWith(".exe"))
+                }
                 .max(Comparator.comparing { Files.getLastModifiedTime(it) })
                 .orElse(null)
         }

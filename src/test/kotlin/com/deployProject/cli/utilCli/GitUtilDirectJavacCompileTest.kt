@@ -1,5 +1,6 @@
 package com.deployProject.cli.utilCli
 
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -52,6 +53,94 @@ class GitUtilDirectJavacCompileTest {
             assertTrue(
                 File(projectDir, "target/classes/example/App.class").isFile,
                 "Direct javac compilation should create target/classes/example/App.class"
+            )
+        } finally {
+            projectDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `configured jdk path compiles revision snapshot without build metadata`() {
+        val projectDir = Files.createTempDirectory("git-util-direct-javac-no-build-file").toFile()
+        try {
+            val javaHome = File(System.getProperty("java.home"))
+            val javac = File(javaHome, if (isWindows()) "bin/javac.exe" else "bin/javac")
+            assumeTrue(javac.isFile, "This test requires a JDK with javac")
+
+            File(projectDir, "src/main/java/example/SnapshotApp.java").apply {
+                parentFile.mkdirs()
+                writeText(
+                    """
+                    package example;
+
+                    public class SnapshotApp {
+                        public String value() {
+                            return "snapshot";
+                        }
+                    }
+                    """.trimIndent()
+                )
+            }
+
+            GitUtil.compileJvmProject(projectDir, javaHome.absolutePath)
+
+            assertTrue(
+                File(projectDir, "target/classes/example/SnapshotApp.class").isFile,
+                "Direct javac compilation should use the configured JDK when build metadata is missing"
+            )
+        } finally {
+            projectDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `configured jdk path compiles selected java sources only`() {
+        val projectDir = Files.createTempDirectory("git-util-direct-javac-selected").toFile()
+        try {
+            val javaHome = File(System.getProperty("java.home"))
+            val javac = File(javaHome, if (isWindows()) "bin/javac.exe" else "bin/javac")
+            assumeTrue(javac.isFile, "This test requires a JDK with javac")
+
+            File(projectDir, "src/main/java/example/SelectedApp.java").apply {
+                parentFile.mkdirs()
+                writeText(
+                    """
+                    package example;
+
+                    public class SelectedApp {
+                        public String value() {
+                            return "selected";
+                        }
+                    }
+                    """.trimIndent()
+                )
+            }
+
+            File(projectDir, "src/main/java/example/UnselectedApp.java").writeText(
+                """
+                package example;
+
+                public class UnselectedApp {
+                    public String value() {
+                        return "unselected";
+                    }
+                }
+                """.trimIndent()
+            )
+
+            GitUtil.compileJvmProject(
+                projectDir,
+                javaHome.absolutePath,
+                listOf("src/main/java/example/SelectedApp.java")
+            )
+
+            assertTrue(
+                File(projectDir, "target/classes/example/SelectedApp.class").isFile,
+                "Direct javac compilation should create the selected class"
+            )
+            assertFalse(
+                File(projectDir, "target/classes/example/UnselectedApp.class").exists(),
+                "Direct javac compilation should not compile unrelated Java sources"
             )
         } finally {
             projectDir.deleteRecursively()

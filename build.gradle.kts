@@ -9,14 +9,24 @@ plugins {
     // Kotlin/JVM, Spring Boot, Dependency Management…
     kotlin("jvm") version "1.9.25"
     kotlin("plugin.spring") version "1.9.25"
-    kotlin("plugin.jpa") version "1.9.25"
     id("org.springframework.boot") version "3.4.4"
     id("io.spring.dependency-management") version "1.1.7"
     application
 }
 
 group = "com.deployproject"
-version = "1.0.1"
+version = "1.0.30"
+
+val hostOsName = System.getProperty("os.name").lowercase()
+val hostOsArch = System.getProperty("os.arch").lowercase()
+val isWindowsHost = hostOsName.contains("windows")
+val javafxVersion = "17.0.14"
+val javafxPlatform = when {
+    isWindowsHost -> "win"
+    hostOsName.contains("mac") && (hostOsArch.contains("aarch64") || hostOsArch.contains("arm64")) -> "mac-aarch64"
+    hostOsName.contains("mac") -> "mac"
+    else -> "linux"
+}
 
 java {
     // 컴파일 대상 JVM 버전 17 설정
@@ -40,11 +50,15 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
     // Spring Boot
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("com.badlogicgames.packr:packr:3.0.3")
+
+    // Desktop window
+    implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
+    implementation("org.openjfx:javafx-graphics:$javafxVersion:$javafxPlatform")
+    implementation("org.openjfx:javafx-controls:$javafxVersion:$javafxPlatform")
+    implementation("org.openjfx:javafx-media:$javafxVersion:$javafxPlatform")
+    implementation("org.openjfx:javafx-web:$javafxVersion:$javafxPlatform")
 
     // Lombok (컴파일 타임만)
     compileOnly("org.projectlombok:lombok")
@@ -55,11 +69,6 @@ dependencies {
     // Git & SVN
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.7.0.202309050840-r")
     implementation("org.tmatesoft.svnkit:svnkit:1.10.3")
-
-    // 기타
-    implementation("org.modelmapper:modelmapper:3.1.1")
-    runtimeOnly("com.mysql:mysql-connector-j")
-    runtimeOnly("com.h2database:h2")
 
     // 테스트
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -82,6 +91,7 @@ application {
 springBoot {
     // Spring Boot 플러그인 버전에 따라
     mainClass.set("com.deployProject.DeployProjectApplicationKt")
+    buildInfo()
 }
 
 // 테스트: JUnit Platform 사용
@@ -89,7 +99,6 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
-val isWindowsHost = System.getProperty("os.name").lowercase().contains("windows")
 val npmCommand = if (isWindowsHost) "npm.cmd" else "npm"
 val desktopJdkLauncher = javaToolchains.launcherFor {
     languageVersion.set(JavaLanguageVersion.of(17))
@@ -135,12 +144,44 @@ val frontendBuildDir = frontendDir.dir("build")
 val generatedFrontendResourcesDir = layout.buildDirectory.dir("generated/frontend-resources")
 val desktopInputDir = layout.buildDirectory.dir("jpackage-input")
 val desktopOutputDir = layout.buildDirectory.dir("jpackage-output")
+val desktopResourceDir = layout.projectDirectory.dir("src/jpackage/windows")
+val desktopAppName = "DeployKit"
+val desktopIconFile = desktopResourceDir.file("deploykit.ico")
+val publicInstallerBaseUrl = "https://deploy.jinukl.dev"
+// Must match the UpgradeCode used by the 1.0.1 installer already installed in the field.
+// Changing this value makes Windows register a separate installed application.
+val desktopUpgradeUuid = "38e6d8ad-6b96-3ed4-83b5-5d4f53becef9"
+
+tasks.register("writeFrontendVersionFile") {
+    group = "build"
+    description = "Writes the public version manifest used by installed apps for update checks."
+
+    val versionFile = frontendDir.file("public/version.json")
+    outputs.file(versionFile)
+
+    doLast {
+        versionFile.asFile.writeText(
+            """
+            {
+              "version": "${project.version}",
+              "installerUrl": "$publicInstallerBaseUrl/download/deploykit.exe",
+              "message": "새로운 deployKit 버전을 사용할 수 있습니다.",
+              "releaseNotes": []
+            }
+            """.trimIndent() + System.lineSeparator(),
+            Charsets.UTF_8
+        )
+    }
+}
 
 tasks.register<Exec>("buildFrontend") {
     group = "build"
     description = "Builds the React frontend for the desktop/local Spring Boot jar."
+    dependsOn("writeFrontendVersionFile")
     workingDir = frontendDir.asFile
     commandLine(npmCommand, "run", "build")
+    environment("REACT_APP_APP_VERSION", project.version.toString())
+    environment("REACT_APP_LATEST_VERSION_URL", "$publicInstallerBaseUrl/version.json")
 
     inputs.files(
         fileTree(frontendDir) {
@@ -182,8 +223,9 @@ tasks.register<Sync>("prepareDesktopImageInput") {
 
 tasks.register<Exec>("desktopImage") {
     group = "distribution"
-    description = "Creates a local desktop app image under build/jpackage/DeployProject."
+    description = "Creates a local desktop app image under build/jpackage/$desktopAppName."
     dependsOn("prepareDesktopImageInput")
+    inputs.file(desktopIconFile)
 
     doFirst {
         delete(desktopOutputDir)
@@ -193,7 +235,8 @@ tasks.register<Exec>("desktopImage") {
         }
         args(
             "--type", "app-image",
-            "--name", "DeployProject",
+            "--name", desktopAppName,
+            "--icon", desktopIconFile.asFile.absolutePath,
             "--input", desktopInputDir.get().asFile.absolutePath,
             "--main-jar", tasks.named<BootJar>("bootJar").get().archiveFileName.get(),
             "--dest", desktopOutputDir.get().asFile.absolutePath,
@@ -209,10 +252,10 @@ tasks.register<Zip>("desktopImageZip") {
     group = "distribution"
     description = "Zips the generated desktop app image."
     dependsOn("desktopImage")
-    archiveFileName.set("DeployProject-desktop-${project.version}.zip")
+    archiveFileName.set("$desktopAppName-desktop-${project.version}.zip")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
-    from(desktopOutputDir.map { it.dir("DeployProject") }) {
-        into("DeployProject")
+    from(desktopOutputDir.map { it.dir(desktopAppName) }) {
+        into(desktopAppName)
     }
 }
 
@@ -221,6 +264,8 @@ tasks.register<Exec>("desktopInstaller") {
     description = "Creates a Windows installer exe with jpackage. Requires WiX Toolset on Windows."
     onlyIf { isWindowsHost }
     dependsOn("prepareDesktopImageInput")
+    inputs.dir(desktopResourceDir)
+    inputs.file(desktopIconFile)
 
     doFirst {
         delete(desktopOutputDir)
@@ -230,28 +275,44 @@ tasks.register<Exec>("desktopInstaller") {
         }
         args(
             "--type", "exe",
-            "--name", "DeployProject",
+            "--name", desktopAppName,
             "--app-version", project.version.toString(),
-            "--vendor", "DeployProject",
+            "--vendor", desktopAppName,
+            "--icon", desktopIconFile.asFile.absolutePath,
             "--input", desktopInputDir.get().asFile.absolutePath,
             "--main-jar", tasks.named<BootJar>("bootJar").get().archiveFileName.get(),
             "--dest", desktopOutputDir.get().asFile.absolutePath,
+            "--resource-dir", desktopResourceDir.asFile.absolutePath,
             "--java-options", "-Dspring.profiles.active=desktop",
             "--java-options", "-Dfile.encoding=UTF-8",
             "--java-options", "-Dsun.stdout.encoding=UTF-8",
             "--java-options", "-Dsun.stderr.encoding=UTF-8",
+            "--win-upgrade-uuid", desktopUpgradeUuid,
             "--win-menu",
             "--win-shortcut",
             "--win-dir-chooser"
         )
     }
+
+    doLast {
+        val installer = desktopOutputDir.get().file("$desktopAppName-${project.version}.exe").asFile
+        if (!installer.isFile) {
+            throw GradleException("jpackage installer was not created: ${installer.absolutePath}")
+        }
+
+        copy {
+            from(installer)
+            into(layout.buildDirectory.dir("download"))
+            rename { "$desktopAppName.exe" }
+        }
+    }
 }
 
 tasks.register<Sync>("installerDownloadFile") {
     group = "distribution"
-    description = "Copies the Windows installer to build/download/DeployProject.exe for the download server."
+    description = "Copies the Windows installer to build/download/$desktopAppName.exe for the download server."
     dependsOn("desktopInstaller")
-    from(desktopOutputDir.map { it.file("DeployProject-${project.version}.exe") })
+    from(desktopOutputDir.map { it.file("$desktopAppName-${project.version}.exe") })
     into(layout.buildDirectory.dir("download"))
-    rename { "DeployProject.exe" }
+    rename { "$desktopAppName.exe" }
 }

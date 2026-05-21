@@ -1,7 +1,7 @@
-import React, { forwardRef, useEffect, useState } from "react";
-import DatePicker from "react-datepicker";
-import { ko } from "date-fns/locale";
-import "react-datepicker/dist/react-datepicker.css";
+import React, { useEffect, useRef, useState } from "react";
+import { DayPicker } from "react-day-picker";
+import { ko } from "react-day-picker/locale";
+import "react-day-picker/style.css";
 import Swal from "sweetalert2";
 
 import { Site } from "../../api/sites";
@@ -34,6 +34,8 @@ type RepoVersionFileListResponse = {
     duplicateFiles: DuplicateFileItem[];
 };
 
+type ActiveDatePicker = "start" | "end" | null;
+
 const collectUniqueDuplicateVersions = (items: DuplicateFileItem[]): RepoVersionOption[] => {
     const seen = new Set<string>();
     const versions: RepoVersionOption[] = [];
@@ -49,25 +51,17 @@ const collectUniqueDuplicateVersions = (items: DuplicateFileItem[]): RepoVersion
     return versions;
 };
 
-const CustomInput = forwardRef<HTMLInputElement, { value?: string; onClick?: () => void }>(
-    ({ value, onClick }, ref) => (
-        <input
-            ref={ref}
-            value={value}
-            onClick={onClick}
-            readOnly
-            placeholder="날짜 선택"
-            style={styles.dateInput}
-        />
-    )
-);
-CustomInput.displayName = "CustomInput";
-
 const toLocalDateText = (date: Date): string => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, "0");
     const d = String(date.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
+};
+
+const addDays = (date: Date, days: number): Date => {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
 };
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
@@ -82,6 +76,8 @@ const vcsTypeLabels: Record<string, string> = {
 const PathConverter: React.FC<Props> = ({ site }) => {
     const [startDate, setStartDate] = useState<Date | null>(null);
     const [endDate, setEndDate] = useState<Date | null>(null);
+    const [activeDatePicker, setActiveDatePicker] = useState<ActiveDatePicker>(null);
+    const dateRangeRef = useRef<HTMLDivElement>(null);
 
     const [versionOptions, setVersionOptions] = useState<RepoVersionOption[]>([]);
     const [selectedVersions, setSelectedVersions] = useState<string[]>([]);
@@ -115,6 +111,19 @@ const PathConverter: React.FC<Props> = ({ site }) => {
     const unresolvedDuplicateCount = duplicateFilesByFilter.filter(
         (item) => !duplicateFileVersionMap[item.path]
     ).length;
+
+    useEffect(() => {
+        if (!activeDatePicker) return;
+
+        const handleMouseDown = (event: MouseEvent) => {
+            if (!dateRangeRef.current?.contains(event.target as Node)) {
+                setActiveDatePicker(null);
+            }
+        };
+
+        document.addEventListener("mousedown", handleMouseDown);
+        return () => document.removeEventListener("mousedown", handleMouseDown);
+    }, [activeDatePicker]);
 
     useEffect(() => {
         if (!site.localPath || !startDate || !endDate) {
@@ -272,6 +281,21 @@ const PathConverter: React.FC<Props> = ({ site }) => {
             window.removeEventListener("keydown", handleKeyDown);
         };
     }, [isDuplicateModalOpen]);
+
+    useEffect(() => {
+        if (!isExtracting) return;
+
+        const previousBodyOverflow = document.body.style.overflow;
+        const previousHtmlOverflow = document.documentElement.style.overflow;
+
+        document.body.style.overflow = "hidden";
+        document.documentElement.style.overflow = "hidden";
+
+        return () => {
+            document.body.style.overflow = previousBodyOverflow;
+            document.documentElement.style.overflow = previousHtmlOverflow;
+        };
+    }, [isExtracting]);
 
     useEffect(() => {
         if (isDuplicateModalOpen && selectedDuplicateFiles.length === 0) {
@@ -432,6 +456,10 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                 ? "선택한 파일 기준으로 배포 패키지를 생성하고 있습니다."
                 : "선택한 버전과 파일 기준으로 배포 패키지를 생성하고 있습니다.",
             allowOutsideClick: false,
+            allowEscapeKey: false,
+            customClass: {
+                popup: "dp-extraction-alert",
+            },
             didOpen: () => Swal.showLoading(),
         });
 
@@ -457,12 +485,12 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                     selectedFiles: selectedFiles.map(normalizePath),
                     duplicateFileVersionMap: selectedDuplicateVersionMap,
                 },
-                { responseType: "blob", timeout: 600000 }
+                { responseType: "blob", timeout: 1800000 }
             );
 
             const now = new Date().toISOString().replace(/[:.]/g, "-");
             const disposition = response.headers["content-disposition"];
-            let filename = `deploy-bundle-${now}.zip`;
+            let filename = `deploy-package-${now}.zip`;
             if (disposition) {
                 const match = disposition.match(/filename="(.+)"/);
                 if (match?.[1]) filename = match[1];
@@ -522,25 +550,101 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         await performExtraction();
     };
 
+    const selectDateRange = (from: Date | null, to: Date | null, closePicker = false) => {
+        setStartDate(from);
+        setEndDate(to);
+        if (closePicker) setActiveDatePicker(null);
+    };
+
+    const selectRecentDays = (days: number) => {
+        const today = new Date();
+        const from = addDays(today, -(days - 1));
+        selectDateRange(from, today, true);
+    };
+
+    const selectBoundaryDate = (date: Date | undefined) => {
+        if (!date || !activeDatePicker) return;
+
+        if (activeDatePicker === "start") {
+            setStartDate(date);
+            if (endDate && date > endDate) setEndDate(null);
+            setActiveDatePicker("end");
+            return;
+        }
+
+        if (startDate && date < startDate) {
+            setStartDate(date);
+            setEndDate(startDate);
+        } else {
+            setEndDate(date);
+        }
+        setActiveDatePicker(null);
+    };
+
+    const activePickerDate = activeDatePicker === "start" ? startDate : endDate;
+    const activePickerDefaultMonth = activePickerDate ?? startDate ?? endDate ?? new Date();
+
+    const checkListBoxStyle = isDuplicateModalOpen || isExtracting
+        ? { ...styles.checkListBox, overflowY: "hidden" as const }
+        : styles.checkListBox;
+
     return (
         <div style={styles.customCardSingle}>
             <div style={styles.mainCard}>
                 <div style={styles.controlsRow}>
-                    <DatePicker
-                        locale={ko}
-                        selected={startDate}
-                        onChange={(date) => setStartDate(date)}
-                        dateFormat="yyyy-MM-dd"
-                        customInput={<CustomInput />}
-                    />
-                    <span style={styles.separator}>~</span>
-                    <DatePicker
-                        locale={ko}
-                        selected={endDate}
-                        onChange={(date) => setEndDate(date)}
-                        dateFormat="yyyy-MM-dd"
-                        customInput={<CustomInput />}
-                    />
+                    <div className="date-range-control" ref={dateRangeRef}>
+                        <div className="date-range-fields">
+                            <button
+                                type="button"
+                                className={`date-range-field${activeDatePicker === "start" ? " active" : ""}`}
+                                aria-expanded={activeDatePicker === "start"}
+                                onClick={() => setActiveDatePicker((prev) => (prev === "start" ? null : "start"))}
+                            >
+                                <span>시작일</span>
+                                <strong>{startDate ? toLocalDateText(startDate) : "날짜 선택"}</strong>
+                            </button>
+                            <span className="date-range-field-separator">~</span>
+                            <button
+                                type="button"
+                                className={`date-range-field${activeDatePicker === "end" ? " active" : ""}`}
+                                aria-expanded={activeDatePicker === "end"}
+                                onClick={() => setActiveDatePicker((prev) => (prev === "end" ? null : "end"))}
+                            >
+                                <span>종료일</span>
+                                <strong>{endDate ? toLocalDateText(endDate) : "날짜 선택"}</strong>
+                            </button>
+                        </div>
+
+                        {activeDatePicker && (
+                            <div className="date-range-popover" role="dialog" aria-label={`${activeDatePicker === "start" ? "시작일" : "종료일"} 선택`}>
+                                <div className="date-range-popover-title">
+                                    {activeDatePicker === "start" ? "시작일 선택" : "종료일 선택"}
+                                </div>
+                                <DayPicker
+                                    mode="single"
+                                    locale={ko}
+                                    weekStartsOn={1}
+                                    defaultMonth={activePickerDefaultMonth}
+                                    selected={activePickerDate ?? undefined}
+                                    onSelect={selectBoundaryDate}
+                                />
+                                <div className="date-range-actions">
+                                    <button type="button" onClick={() => selectRecentDays(1)}>
+                                        오늘
+                                    </button>
+                                    <button type="button" onClick={() => selectRecentDays(7)}>
+                                        최근 7일
+                                    </button>
+                                    <button type="button" onClick={() => selectRecentDays(30)}>
+                                        최근 30일
+                                    </button>
+                                    <button type="button" onClick={() => selectDateRange(null, null)}>
+                                        초기화
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div style={styles.contentLayout}>
@@ -574,7 +678,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                                     </div>
                                 </div>
 
-                                <div style={styles.checkListBox}>
+                                <div style={checkListBoxStyle}>
                                     {isLoadingVersions && <div style={styles.emptyText}>버전 목록을 불러오는 중입니다.</div>}
                                     {!isLoadingVersions && versionOptions.length === 0 && (
                                         <div style={styles.emptyText}>선택한 날짜 범위에 해당하는 버전이 없습니다.</div>
@@ -621,7 +725,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                                 </div>
                             </div>
 
-                            <div style={styles.checkListBox}>
+                            <div style={checkListBoxStyle}>
                                 {!isLocalMode && selectedVersions.length === 0 && (
                                     <div style={styles.emptyText}>버전을 선택하면 변경 파일을 표시합니다.</div>
                                 )}

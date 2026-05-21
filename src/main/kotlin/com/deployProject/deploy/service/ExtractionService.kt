@@ -1,16 +1,14 @@
 package com.deployProject.deploy.service
 
-import com.badlogicgames.packr.Packr
-import com.badlogicgames.packr.PackrConfig
+import com.deployProject.cli.infoCli.GitInfoCli
+import com.deployProject.cli.infoCli.LocalInfoCli
+import com.deployProject.cli.infoCli.SvnInfoCli
+import com.deployProject.cli.utilCli.GitUtil
 import com.deployProject.deploy.domain.extraction.ExtractionDto
 import com.deployProject.deploy.domain.extraction.RepositoryDuplicateFileDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionFileListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionOptionDto
-import com.deployProject.deploy.domain.extraction.TargetOsStatus
-import com.deployProject.cli.utilCli.GitUtil
-import com.deployProject.cli.utilCli.JarCreator
-import com.deployProject.cli.utilCli.JlinkCreator
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
@@ -26,8 +24,8 @@ import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.time.Instant
 import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Date
@@ -35,22 +33,18 @@ import java.util.UUID
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.system.measureTimeMillis
 
 
 /**
- * Bundles repository extraction output into a deployable desktop package.
+ * Bundles repository extraction output into a downloadable package.
  *
  * Flow:
- * 1. Ensure a target-specific minimal JRE exists under `custom-jre/<os>`.
- * 2. Build the extraction CLI fat jar.
- * 3. Wrap it with Packr, reusing a cached template when possible.
- * 4. Zip the final output directory and return it.
+ * 1. Create a managed per-request output directory.
+ * 2. Execute the extraction logic in the local desktop server process.
+ * 3. Zip the final output directory and return it.
  */
 @Service
-class ExtractionService(
-    private val jarCreator: JarCreator = JarCreator
-) {
+class ExtractionService {
     private val logger = LoggerFactory.getLogger(ExtractionService::class.java)
 
     private enum class RepositoryMode {
@@ -69,40 +63,28 @@ class ExtractionService(
 
     private val runtimeWorkspaceRoot: Path = resolveRuntimeWorkspaceRoot()
 
-    /** Root directory for target-specific minimal JREs. */
-    private val customJreBase: Path = runtimeWorkspaceRoot.resolve("custom-jre")
-
     // Keep extraction output under a managed workspace root instead of mixing
     // generated artifacts into source directories.
     private val extractionWorkRoot: Path = runtimeWorkspaceRoot.resolve("GitInfoJarFile")
 
-    /** Root directory for cached Packr launcher templates. */
-    private val packrTemplateBase: Path = runtimeWorkspaceRoot.resolve("packr-template")
-
-    /** Prevent concurrent jlink runs from racing on the same target directory. */
-    private val jlinkLock = Any()
-
     companion object {
-        private const val DEPLOY_JAR_NAME = "deploy-project-cli.jar"
-        private const val EXECUTABLE_BASE = "deploy-project-cli"
-        private const val CFG_NAME = "deploy-project-cli.cfg"
-        private const val MAIN_CLASS = "com.deployProject.cli.ExtractionLauncher"
         private const val VERSION_RESULT_LIMIT = 300
     }
 
     private val STALE_WORK_DIR_RETENTION_HOURS = 24L
 
     private val versionDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    private val selectionDelimiter = "|~|"
-    private val keyValueDelimiter = "::"
 
-    /** Main entry point for bundle generation. */
+    /** Main entry point for package generation. */
     fun extractGitInfo(extractionDto: ExtractionDto): File {
-        cleanupStaleExtractionDirs()
-        val repositoryContext = resolveRepositoryContext(extractionDto.localPath)
-        logger.info("Deploy bundle generation started")
+        GitUtil.logExtractionPhase(logger, "cleanup-stale-extraction-dirs") {
+            cleanupStaleExtractionDirs()
+        }
+        val repositoryContext = GitUtil.logExtractionPhase(logger, "resolve-repository-context") {
+            resolveRepositoryContext(extractionDto.localPath)
+        }
 
-        val target = extractionDto.targetOs ?: error("targetOs is null")
+        val targetName = extractionDto.targetOs?.name?.lowercase() ?: "local"
         val selectedVersions = extractionDto.selectedVersions.orEmpty()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -118,6 +100,16 @@ class ExtractionService(
             .mapValues { it.value.trim() }
             .filter { (path, version) -> path.isNotEmpty() && version.isNotEmpty() }
 
+        logger.info(
+            "Deploy package generation started: mode={}, workTree={}, fileStatusType={}, selectedVersions={}, selectedFiles={}, duplicateSelections={}",
+            repositoryContext.mode,
+            repositoryContext.workTree.absolutePath,
+            extractionDto.fileStatusType,
+            selectedVersions.size,
+            selectedFiles.size,
+            duplicateFileVersionMap.size
+        )
+
         val hasLegacyVersionRange = !extractionDto.sinceVersion.isNullOrBlank() && !extractionDto.untilVersion.isNullOrBlank()
         val requiresDiffSelection =
             repositoryContext.mode != RepositoryMode.LOCAL &&
@@ -129,53 +121,106 @@ class ExtractionService(
             }
         }
 
-        // 1. Ensure a target-specific runtime exists.
-        ensureTargetJre(target, extractionDto.jdkPath)
-
-        // 2. Create a per-request working directory.
-        val baseDir = resolveBaseDir()
-        val jarFile = File(baseDir, DEPLOY_JAR_NAME)
-
-        // 3. Build the extraction CLI jar.
-        val tJar = measureTimeMillis {
-            logger.info("Building deploy CLI jar")
-            jarCreator.main(
-                listOf(
-                    extractionDto.localPath ?: "",      // 0: repoDir
-                    "",                                 // 1: relPath
-                    extractionDto.since ?: "",          // 2: sinceDate
-                    extractionDto.until ?: "",          // 3: untilDate
-                    extractionDto.fileStatusType ?: "", // 4: fileStatusType
-                    baseDir.absolutePath,                // 5: jarOutputDir
-                    extractionDto.homePath ?: "",       // 6: deployServerDir
-                    extractionDto.sinceVersion ?: "",   // 7: sinceVersion
-                    extractionDto.untilVersion ?: "",   // 8: untilVersion
-                    selectedVersions.joinToString(selectionDelimiter), // 9: selectedVersions
-                    selectedFiles.joinToString(selectionDelimiter),    // 10: selectedFiles
-                    encodeDuplicateFileVersionMap(duplicateFileVersionMap), // 11: duplicateFileVersionMap
-                    extractionDto.jdkPath ?: "" // 12: jdkPath
-                ).toTypedArray()
-            )
+        // 1. Create a per-request working directory.
+        val baseDir = GitUtil.logExtractionPhase(logger, "prepare-work-directory") {
+            resolveBaseDir()
         }
-        logger.info("Deploy CLI jar generated ({} ms), path={}", tJar, jarFile.absolutePath)
-
-        // 4. Reset the output directory for the wrapped executable.
-        val outputDir = File(baseDir, "exe-output").apply { recreateDir() }
-
-        // 5. Build or refresh the Packr wrapper template.
-        packrTemplateDir(target).takeIf { it.exists() }?.deleteRecursively()
-        val tPackr = measureTimeMillis {
-            packWithPackr(jarFile, target, outputDir)
+        val outputDir = GitUtil.logExtractionPhase(logger, "prepare-output-directory") {
+            File(baseDir, "deploy-output").apply { recreateDir() }
         }
-        logger.info("Packr completed ({} ms)", tPackr)
 
-        // 6. Zip the final bundle directory.
-        val zipFile = File(outputDir.parentFile, "bundle-${target.name.lowercase()}.zip")
-        zipDirectory(outputDir, zipFile)
-        logger.info("ZIP generated: {}", zipFile.absolutePath)
+        // 2. Execute the extraction immediately on the local desktop server.
+        GitUtil.logExtractionPhase(logger, "run-local-extraction") {
+            GitUtil.withoutProgressDialog {
+                runLocalExtraction(
+                    extractionDto = extractionDto,
+                    repositoryContext = repositoryContext,
+                    outputDir = outputDir,
+                    selectedVersions = selectedVersions,
+                    selectedFiles = selectedFiles,
+                    duplicateFileVersionMap = duplicateFileVersionMap
+                )
+            }
+        }
+        logger.info("Deploy extraction output prepared: output={}", outputDir.absolutePath)
+
+        // 3. Zip the final package directory.
+        val zipFile = File(baseDir, "deploy-package-$targetName.zip")
+        GitUtil.logExtractionPhase(logger, "zip-output-directory") {
+            zipDirectory(outputDir, zipFile)
+        }
+        logger.info(
+            "Deploy package generation finished: zip={}, sizeBytes={}",
+            zipFile.absolutePath,
+            zipFile.length()
+        )
 
         return zipFile
     }
+
+    private fun runLocalExtraction(
+        extractionDto: ExtractionDto,
+        repositoryContext: RepositoryContext,
+        outputDir: File,
+        selectedVersions: List<String>,
+        selectedFiles: List<String>,
+        duplicateFileVersionMap: Map<String, String>
+    ) {
+        val rawSinceDate = parseDateOrToday(extractionDto.since)
+        val rawUntilDate = parseDateOrToday(extractionDto.until)
+        val sinceDate = minOf(rawSinceDate, rawUntilDate)
+        val untilDate = maxOf(rawSinceDate, rawUntilDate)
+        val statusType = GitUtil.parseStatusType(extractionDto.fileStatusType)
+        val deployServerDir = extractionDto.homePath?.trim().takeUnless { it.isNullOrBlank() }
+            ?: "/home/bjw/deployProject/."
+
+        when (repositoryContext.mode) {
+            RepositoryMode.GIT -> GitInfoCli().gitCliExecution(
+                repoPath = repositoryContext.workTree.path,
+                since = sinceDate,
+                until = untilDate,
+                fileStatusType = statusType,
+                deployServerDir = deployServerDir,
+                jdkPath = extractionDto.jdkPath,
+                sinceVersion = extractionDto.sinceVersion,
+                untilVersion = extractionDto.untilVersion,
+                selectedVersions = selectedVersions,
+                selectedFiles = selectedFiles,
+                duplicateFileVersionMap = duplicateFileVersionMap,
+                outputDir = outputDir,
+                openOnCompletion = false
+            )
+
+            RepositoryMode.SVN -> SvnInfoCli().svnCliExecution(
+                repoPath = repositoryContext.workTree.path,
+                since = dateAtStartOfDay(sinceDate),
+                until = dateAtStartOfDay(untilDate),
+                fileStatusType = statusType,
+                deployServerDir = deployServerDir,
+                jdkPath = extractionDto.jdkPath,
+                sinceVersion = extractionDto.sinceVersion,
+                untilVersion = extractionDto.untilVersion,
+                selectedVersions = selectedVersions,
+                selectedFiles = selectedFiles,
+                duplicateFileVersionMap = duplicateFileVersionMap,
+                requestedOutputDir = outputDir
+            )
+
+            RepositoryMode.LOCAL -> LocalInfoCli().localCliExecution(
+                repoPath = repositoryContext.workTree.path,
+                since = sinceDate,
+                until = untilDate,
+                fileStatusType = statusType,
+                deployServerDir = deployServerDir,
+                jdkPath = extractionDto.jdkPath,
+                selectedFiles = selectedFiles,
+                requestedOutputDir = outputDir
+            )
+        }
+    }
+
+    private fun dateAtStartOfDay(date: LocalDate): Date =
+        Date.from(date.atStartOfDay(ZoneId.systemDefault()).toInstant())
 
     fun cleanupExtractionArtifacts(zipFile: File) {
         val workDir = zipFile.parentFile ?: return
@@ -466,12 +511,6 @@ class ExtractionService(
         return normalized.takeIf { it.isNotBlank() }
     }
 
-    private fun encodeDuplicateFileVersionMap(data: Map<String, String>): String {
-        return data.entries.joinToString(selectionDelimiter) { (path, version) ->
-            "$path$keyValueDelimiter$version"
-        }
-    }
-
     private fun createSvnClientManager(): SVNClientManager {
         val configDir = detectSvnConfigDir()
         require(configDir.exists()) { "SVN config directory not found: ${configDir.path}" }
@@ -566,116 +605,6 @@ class ExtractionService(
         return if (text.isBlank()) LocalDate.now() else LocalDate.parse(text)
     }
 
-    /** Wrap the generated jar with Packr and return the executable entry point. */
-    private fun packWithPackr(
-        jarFile: File,
-        targetOs: TargetOsStatus,
-        outputDir: File
-    ): File {
-        val exeName = exeNameFor(targetOs)
-        val templateDir = packrTemplateDir(targetOs)
-        val targetJre = targetJreDir(targetOs)
-
-        // Keep the Packr classpath pinned to the generated jar filename.
-        fun writeCfg(dir: File, jarName: String) {
-            File(dir, CFG_NAME).writeText(
-                buildString {
-                    appendLine("classpath=$jarName")
-                    appendLine("mainclass=$MAIN_CLASS")
-                    appendLine("vmargs=-Xmx512m")
-                }
-            )
-        }
-
-        // Fast path: reuse the cached template when it already exists.
-        if (templateDir.exists() && File(templateDir, exeName).exists()) {
-            outputDir.recreateFrom(templateDir)
-            jarFile.copyTo(File(outputDir, jarFile.name), overwrite = true)
-            writeCfg(outputDir, jarFile.name)
-            return File(outputDir, exeName)
-        }
-
-        // Slow path: build the Packr template once, then copy from it.
-        if (templateDir.exists()) templateDir.deleteRecursively()
-        templateDir.mkdirs()
-
-        val javaBin = targetJre.resolve("bin").resolve(
-            if (targetOs == TargetOsStatus.WINDOWS) "java.exe" else "java"
-        )
-        require(Files.exists(javaBin)) {
-            "Target JRE was not found for ${targetOs.name}: $targetJre (bin/java is required)"
-        }
-
-        val config = PackrConfig().apply {
-            platform = when (targetOs) {
-                TargetOsStatus.WINDOWS -> PackrConfig.Platform.Windows64
-                TargetOsStatus.MAC     -> PackrConfig.Platform.MacOS
-                TargetOsStatus.LINUX   -> PackrConfig.Platform.Linux64
-            }
-            jdk = targetJre.toString()
-            executable = EXECUTABLE_BASE
-            classpath = listOf(jarFile.absolutePath)
-            mainClass = MAIN_CLASS
-            vmArgs = listOf("-Xmx512m")
-            outDir = templateDir
-            useZgcIfSupportedOs = false
-        }
-
-        Packr().pack(config)
-        outputDir.recreateFrom(templateDir)
-        jarFile.copyTo(File(outputDir, jarFile.name), overwrite = true)
-        writeCfg(outputDir, jarFile.name)
-
-        return File(outputDir, exeName)
-    }
-
-    /** Ensure that a target-specific minimal JRE exists. */
-    private fun ensureTargetJre(target: TargetOsStatus, requestedJdkPath: String?) {
-        val targetDir = targetJreDir(target)
-        val javaName = if (target == TargetOsStatus.WINDOWS) "java.exe" else "java"
-        val javaBin = targetDir.resolve("bin").resolve(javaName)
-
-        if (Files.exists(javaBin)) {
-            logger.info("Target JRE already exists: {}", targetDir)
-            return
-        }
-
-        val hostMatchesTarget = when (target) {
-            TargetOsStatus.WINDOWS -> hostOsName.contains("windows")
-            TargetOsStatus.MAC     -> hostOsName.contains("mac")
-            TargetOsStatus.LINUX   -> hostOsName.contains("linux")
-        }
-        if (!hostMatchesTarget) {
-            throw IllegalStateException(
-                "Target JRE is missing for ${target.name}: $targetDir\n" +
-                    "This server (OS=$hostOsName) cannot generate that target runtime locally with jlink.\n" +
-                    "Prepare the runtime on the target OS and upload it under custom-jre/<windows|mac|linux>.\n" +
-                    "Expected path: $targetDir"
-            )
-        }
-
-        synchronized(jlinkLock) {
-            if (Files.exists(javaBin)) return
-
-            val javaHome = resolveJlinkJavaHome(requestedJdkPath)
-            logger.info("Generating target JRE with jlink: {}, javaHome={}", targetDir, javaHome)
-
-            val modules = listOf(
-                "java.base",
-                "java.logging",
-                "java.xml",
-                "java.desktop",
-                "jdk.unsupported",
-                "jdk.crypto.ec",
-            )
-
-            Files.createDirectories(targetDir)
-            JlinkCreator.createJlink(modules, targetDir, javaHome)
-
-            require(Files.exists(javaBin)) { "jlink failed to create $javaBin" }
-        }
-    }
-
     /* -------------------------- Paths & Utils -------------------------- */
 
     private fun resolveRuntimeWorkspaceRoot(): Path {
@@ -689,77 +618,6 @@ class ExtractionService(
         val fallback = Paths.get(System.getProperty("user.home"), ".deploy-project", "runtime")
         return Files.createDirectories(fallback)
     }
-
-    private fun resolveJlinkJavaHome(requestedJdkPath: String?): Path {
-        val candidates = mutableListOf<Path>()
-
-        requestedJdkPath
-            ?.takeIf { it.isNotBlank() }
-            ?.let { candidates.add(normalizeJavaHomePath(Path.of(it))) }
-
-        System.getProperty("app.javaHome")
-            ?.takeIf { it.isNotBlank() }
-            ?.let { candidates.add(normalizeJavaHomePath(Path.of(it))) }
-
-        System.getenv("JAVA_HOME")
-            ?.takeIf { it.isNotBlank() }
-            ?.let { candidates.add(normalizeJavaHomePath(Path.of(it))) }
-
-        candidates.add(normalizeJavaHomePath(Path.of(System.getProperty("java.home"))))
-
-        if (hostOsName.contains("windows")) {
-            candidates.add(Path.of("C:/Program Files/Java/jdk-17"))
-            candidates.add(Path.of("C:/Program Files/Java/jdk-21"))
-        } else if (hostOsName.contains("mac")) {
-            candidates.add(Path.of("/Users/mac/.sdkman/candidates/java/current"))
-        } else {
-            candidates.add(Path.of("/home/bjw/.sdkman/candidates/java/current"))
-        }
-
-        return candidates
-            .distinct()
-            .firstOrNull { hasJlink(it) }
-            ?: error(
-                "jlink executable was not found. Configure a full JDK path in jdkPath, JAVA_HOME, or -Dapp.javaHome."
-            )
-    }
-
-    private fun normalizeJavaHomePath(path: Path): Path {
-        val fileName = path.fileName?.toString()?.lowercase().orEmpty()
-        return when {
-            fileName == "bin" -> path.parent ?: path
-            fileName == "java.exe" || fileName == "java" || fileName == "jlink.exe" || fileName == "jlink" ->
-                path.parent?.parent ?: path
-            else -> path
-        }.toAbsolutePath()
-    }
-
-    private fun hasJlink(javaHome: Path): Boolean {
-        val executable = javaHome.resolve("bin").resolve(if (hostOsName.contains("windows")) "jlink.exe" else "jlink")
-        return Files.isExecutable(executable)
-    }
-
-    /** Target-specific JRE directory. */
-    private fun targetJreDir(target: TargetOsStatus): Path =
-        when (target) {
-            TargetOsStatus.WINDOWS -> customJreBase.resolve("windows")
-            TargetOsStatus.MAC     -> customJreBase.resolve("mac")
-            TargetOsStatus.LINUX   -> customJreBase.resolve("linux")
-        }
-
-    /** Cached Packr template directory for each target OS. */
-    private fun packrTemplateDir(targetOs: TargetOsStatus): File {
-        val tag = when (targetOs) {
-            TargetOsStatus.WINDOWS -> "windows"
-            TargetOsStatus.MAC     -> "mac"
-            TargetOsStatus.LINUX   -> "linux"
-        }
-        return packrTemplateBase.resolve(tag).toFile()
-    }
-
-    /** Executable name for the target OS. */
-    private fun exeNameFor(targetOs: TargetOsStatus): String =
-        if (targetOs == TargetOsStatus.WINDOWS) "$EXECUTABLE_BASE.exe" else EXECUTABLE_BASE
 
     /** Creates a per-request working directory under the managed extraction root. */
     private fun resolveBaseDir(): File {
@@ -814,9 +672,4 @@ class ExtractionService(
         mkdirs()
     }
 
-    /** Recreates this directory by copying the source tree into it. */
-    private fun File.recreateFrom(src: File) {
-        if (exists()) deleteRecursively()
-        src.copyRecursively(this, overwrite = true)
-    }
 }

@@ -8,10 +8,9 @@ type PathForm = {
     homePath: string;
     localPath: string;
     jdkPath: string;
-    userSeq: number | "";
 };
 
-type PathFieldKey = Exclude<keyof PathForm, "userSeq">;
+type PathFieldKey = keyof PathForm;
 
 const fieldDefinitions: Array<{ key: PathFieldKey; label: string; canBrowse?: boolean }> = [
     { key: "text", label: "사이트 이름" },
@@ -34,7 +33,6 @@ export default function PathAddModal({
         homePath: "",
         localPath: "",
         jdkPath: "",
-        userSeq: JSON.parse(localStorage.getItem("deployUser") || "{}").id || "",
     });
 
     const [form, setForm] = useState<PathForm>(createInitialForm);
@@ -79,21 +77,21 @@ export default function PathAddModal({
     const renderField = (key: PathFieldKey, label: string, canBrowse?: boolean) => {
         if (canBrowse) {
             return (
-                <div className="input-group mb-3" key={key}>
-                    <span className="input-group-text">{label}</span>
+                <div className="input-group mb-3 dp-path-field" key={key}>
+                    <span className="input-group-text dp-path-label">{label}</span>
                     <input
                         type="text"
-                        className="form-control"
+                        className="form-control dp-path-input"
                         id={key}
                         placeholder="선택된 경로가 없습니다."
                         value={form[key]}
                         readOnly
                         onClick={() => handleBrowse(key, label)}
-                        style={{ cursor: "pointer", backgroundColor: "#ffffff" }}
+                        style={{ cursor: "pointer", backgroundColor: "var(--control-bg)" }}
                     />
                     <button
                         type="button"
-                        className="btn btn-outline-secondary"
+                        className="btn btn-outline-secondary dp-path-browse-btn"
                         onClick={() => handleBrowse(key, label)}
                     >
                         폴더 선택
@@ -103,19 +101,16 @@ export default function PathAddModal({
         }
 
         return (
-            <div className="input-group mb-3" key={key}>
-                <span className="input-group-text">{label}</span>
-                <div className="form-floating flex-grow-1">
-                    <input
-                        type="text"
-                        className="form-control"
-                        id={key}
-                        placeholder={label}
-                        value={form[key]}
-                        onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                    />
-                    <label htmlFor={key}>{label}</label>
-                </div>
+            <div className="input-group mb-3 dp-path-field" key={key}>
+                <span className="input-group-text dp-path-label">{label}</span>
+                <input
+                    type="text"
+                    className="form-control dp-path-input"
+                    id={key}
+                    placeholder={label}
+                    value={form[key]}
+                    onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                />
             </div>
         );
     };
@@ -146,23 +141,31 @@ export default function PathAddModal({
     if (!show) return null;
 
     return (
-        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: "rgba(0, 0, 0, 0.55)" }}>
-            <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: "760px" }} ref={modalRef}>
-                <div className="modal-content">
-                    <div className="modal-header">
+        <div className="modal dp-modal-backdrop" tabIndex={-1} style={{ display: "flex", backgroundColor: "rgba(0, 0, 0, 0.55)" }}>
+            <div
+                className="modal-dialog modal-dialog-centered dp-modal-dialog dp-path-add-dialog"
+                style={{
+                    width: "min(1037px, 90vw)",
+                    maxWidth: "min(1037px, 90vw)",
+                    flexBasis: "min(1037px, 90vw)",
+                }}
+                ref={modalRef}
+            >
+                <div className="modal-content dp-modal-content">
+                    <div className="modal-header dp-modal-header">
                         <h5 className="modal-title">경로 등록</h5>
                         <button type="button" className="btn-close" aria-label="Close" onClick={onPathAdd} />
                     </div>
 
-                    <div className="modal-body">
+                    <div className="modal-body dp-modal-body">
                         {fieldDefinitions.map(({ key, label, canBrowse }) => renderField(key, label, canBrowse))}
                     </div>
 
-                    <div className="modal-footer">
-                        <button className="btn btn-outline-secondary" onClick={onPathAdd}>
+                    <div className="modal-footer dp-modal-footer">
+                        <button className="btn btn-outline-secondary dp-modal-button dp-modal-button-secondary" onClick={onPathAdd}>
                             취소
                         </button>
-                        <button className="btn btn-primary" onClick={savePath}>
+                        <button className="btn btn-primary dp-modal-button dp-modal-button-primary" onClick={savePath}>
                             저장
                         </button>
                     </div>

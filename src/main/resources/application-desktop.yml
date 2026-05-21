@@ -5,27 +5,17 @@ server:
 spring:
   main:
     headless: false
-  datasource:
-    url: "jdbc:h2:file:${user.home}/.deploy-project/deploy-project;MODE=MySQL;DATABASE_TO_LOWER=TRUE;AUTO_SERVER=TRUE"
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
-  sql:
-    init:
-      mode: never
-  jpa:
-    show-sql: false
-    hibernate:
-      ddl-auto: update
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.H2Dialect
+  mvc:
+    async:
+      request-timeout: 1800000
 
 deploy:
   desktop:
     open-browser: true
+    window-mode: ${DEPLOY_PROJECT_WINDOW_MODE:native}
   client:
     ui-mode: ${DEPLOY_PROJECT_UI_MODE:APP}
-    server-api-mode: ${DEPLOY_PROJECT_SERVER_API_MODE:REMOTE}
-    remote-api-base-url: ${DEPLOY_PROJECT_REMOTE_API_BASE_URL:https://deploy.jinuk.dev/}
-    installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:https://deploy.jinuk.dev/download/deploy-project.exe}
+    installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:}
+    latest-version-url: ${DEPLOY_PROJECT_LATEST_VERSION_URL:https://deploy.jinukl.dev/version.json}
+  storage:
+    sites-file: ${DEPLOY_PROJECT_SITES_FILE:}

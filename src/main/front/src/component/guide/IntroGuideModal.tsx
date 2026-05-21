@@ -1,10 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { styles } from "../../styles/IntroGuideStyles";
-import guideCliComplete from "../../assets/guide/guide-cli-complete.png";
-import guideCliProgress from "../../assets/guide/guide-cli-progress.png";
 import guideDownloadComplete from "../../assets/guide/guide-download-complete.png";
 import guideDuplicateModal from "../../assets/guide/guide-duplicate-modal.png";
-import guideLogin from "../../assets/guide/guide-login.png";
 import guideMainDuplicates from "../../assets/guide/guide-main-duplicates.png";
 import guideMainEmpty from "../../assets/guide/guide-main-empty.png";
 import guideMainFiles from "../../assets/guide/guide-main-files.png";
@@ -87,25 +84,25 @@ const INTRO_GUIDE_ANIMATION_CSS = `
 
 const slides: Slide[] = [
     {
-        eyebrow: "1. 사용자/경로 준비",
-        title: "사용자 이름을 입력하고 배포 경로를 등록합니다",
+        eyebrow: "1. 경로 준비",
+        title: "배포 경로를 등록하거나 파일에서 가져옵니다",
         summary:
-            "처음에는 사용자 이름을 입력해 개인 작업 정보를 불러온 뒤, 사이트별로 사용할 서버 ROOT 경로, 로컬 프로젝트 경로, JDK 경로를 등록합니다.",
+            "처음 실행하면 사이트별로 사용할 서버 ROOT 경로, 로컬 프로젝트 경로, JDK 경로를 등록합니다. 백업해 둔 JSON 파일이 있다면 경로 가져오기로 한 번에 등록할 수 있습니다.",
         images: [
-            { src: guideLogin, caption: "사용자 이름 입력" },
             { src: guidePathRegister, caption: "경로 등록 모달" },
+            { src: guideSiteSelect, caption: "배포 대상 선택" },
         ],
         nodes: [
             {
-                title: "사용자 이름 입력",
-                text: "닉네임 기준으로 이전 작업 정보와 사이트 목록을 불러옵니다.",
-            },
-            {
-                title: "경로 등록 모달",
+                title: "경로 등록",
                 text: "서버 ROOT, 로컬 프로젝트, JDK 폴더를 저장합니다. Java 파일을 class 파일로 만들 프로젝트라면 JDK 경로가 필요합니다.",
             },
+            {
+                title: "경로 가져오기/다운로드",
+                text: "경로 다운로드로 현재 목록을 JSON으로 백업하고, 경로 가져오기로 다른 PC 또는 재설치 환경에서 다시 등록합니다. 이미 있는 경로는 중복 등록되지 않습니다.",
+            },
         ],
-        note: "경로 등록은 사이트별 설정입니다. 한 번 저장하면 다음 작업부터 같은 사이트에 다시 적용됩니다.",
+        note: "등록한 경로는 이 PC의 로컬 파일에 저장됩니다. 경로 등록 후 목록에서 패키지를 만들 대상을 선택합니다.",
     },
     {
         eyebrow: "2. 대상/날짜 선택",
@@ -156,9 +153,9 @@ const slides: Slide[] = [
     },
     {
         eyebrow: "4. 웹 추출 실행",
-        title: "추출하기 버튼을 눌러 bundle 파일을 다운로드합니다",
+        title: "추출하기 버튼을 눌러 최종 패키지를 다운로드합니다",
         summary:
-            "파일 선택이 끝나면 추출하기 버튼을 클릭합니다. 웹 화면에서 추출 진행 상태를 확인하고, 완료되면 bundle-windows.zip 파일을 다운로드합니다.",
+            "파일 선택이 끝나면 추출하기 버튼을 클릭합니다. 웹 화면에서 추출 진행 상태를 확인하고, 완료되면 deploy-package-windows.zip 파일을 다운로드합니다.",
         images: [
             { src: guideMainFiles, caption: "추출하기 버튼 클릭" },
             { src: guideWebExtracting, caption: "웹 화면 추출 진행" },
@@ -175,41 +172,31 @@ const slides: Slide[] = [
             },
             {
                 title: "다운로드 완료",
-                text: "bundle-windows.zip 다운로드가 끝나면 압축을 풀 준비를 합니다.",
+                text: "deploy-package-windows.zip 다운로드가 끝나면 압축을 풀 준비를 합니다.",
             },
         ],
-        note: "다운로드까지만 끝난 상태에서는 아직 최종 패키지 폴더가 만들어진 것이 아닙니다. 압축 해제 후 실행 파일을 한 번 더 실행해야 합니다.",
+        note: "다운로드된 압축 파일 안에는 이미 최종 패키지 파일과 patch.sh가 들어 있습니다. 별도 실행 파일을 다시 실행하지 않습니다.",
     },
     {
-        eyebrow: "5. 실행 파일 처리",
-        title: "압축을 풀고 실행 파일로 최종 패키지를 만듭니다",
+        eyebrow: "5. 패키지 확인",
+        title: "압축을 풀고 최종 패키지 구성을 확인합니다",
         summary:
-            "다운로드한 bundle-windows.zip을 압축 해제하면 실행 파일과 작업 파일이 보입니다. 실행 파일을 실행하면 class 생성, patch.sh 생성, 결과 폴더 정리가 순서대로 진행됩니다.",
+            "다운로드한 deploy-package-windows.zip을 압축 해제하면 변경 파일과 patch.sh가 바로 보입니다. 이 폴더 전체가 서버로 옮길 최종 패키지입니다.",
         images: [
-            { src: guideDownloadComplete, caption: "bundle-windows.zip 압축 풀기" },
-            { src: guideResultFolder, caption: "실행/패키지 파일 확인" },
-            { src: guideCliProgress, caption: "실행 파일 진행 상태" },
-            { src: guideCliComplete, caption: "추출 완료 알림" },
+            { src: guideDownloadComplete, caption: "deploy-package-windows.zip 압축 풀기" },
+            { src: guideResultFolder, caption: "패키지 파일 확인" },
         ],
         nodes: [
             {
-                title: "bundle-windows.zip 압축 풀기",
+                title: "deploy-package-windows.zip 압축 풀기",
                 text: "다운로드한 압축 파일을 작업 폴더에 풀고, 생성된 파일 구성을 확인합니다.",
             },
             {
-                title: "실행/패키지 파일 확인",
-                text: "압축 해제 폴더에서 실행 파일과 패키지 생성에 필요한 파일이 있는지 확인합니다.",
-            },
-            {
-                title: "실행 파일 진행 상태",
-                text: "실행 파일이 선택 파일 복원, class 생성, patch.sh 생성을 진행하는 상태를 확인합니다.",
-            },
-            {
-                title: "추출 완료 알림",
-                text: "작업이 끝나면 완료 알림과 함께 결과 폴더가 열립니다.",
+                title: "패키지 파일 확인",
+                text: "압축 해제 폴더에서 변경 파일과 patch.sh가 들어 있는지 확인합니다.",
             },
         ],
-        note: "열린 결과 폴더 전체를 배포 서버로 옮기면 됩니다. 이후 서버에서 patch.sh를 실행해 백업과 배포를 진행합니다.",
+        note: "압축 해제한 폴더 전체를 배포 서버로 옮기면 됩니다. 이후 서버에서 patch.sh를 실행해 백업과 배포를 진행합니다.",
     },
     {
         eyebrow: "6. 서버 배포",

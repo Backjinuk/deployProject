@@ -4,6 +4,7 @@ import com.deployProject.deploy.domain.extraction.ExtractionDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionFileListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionListDto
 import com.deployProject.deploy.service.ExtractionService
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -14,12 +15,14 @@ import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 
 @RestController
 @RequestMapping("/api/git")
 class GitController(
     private val extractionService: ExtractionService
 ) {
+    private val logger = LoggerFactory.getLogger(GitController::class.java)
 
     @PostMapping("/versions")
     fun listVersions(@RequestBody dto: ExtractionDto): RepositoryVersionListDto {
@@ -39,14 +42,16 @@ class GitController(
         val streamBody = StreamingResponseBody { outputStream ->
             try {
                 FileInputStream(zipFile).use { fis ->
-                    val buffer = ByteArray(8 * 1024)
+                    val buffer = ByteArray(64 * 1024)
                     var read = fis.read(buffer)
                     while (read != -1) {
                         outputStream.write(buffer, 0, read)
-                        outputStream.flush()
                         read = fis.read(buffer)
                     }
+                    outputStream.flush()
                 }
+            } catch (error: IOException) {
+                logger.warn("Deploy package download connection closed before completion: {}", zipFile.name)
             } finally {
                 // 수정 이유: 사용자 다운로드가 끝난 뒤 서버 임시 산출물을 즉시 정리해 디스크 누적을 막는다.
                 extractionService.cleanupExtractionArtifacts(zipFile)

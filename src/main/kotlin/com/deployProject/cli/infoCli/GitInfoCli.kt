@@ -46,10 +46,12 @@ class GitInfoCli {
         untilVersion: String?,
         selectedVersions: List<String>,
         selectedFiles: List<String>,
-        duplicateFileVersionMap: Map<String, String>
-    ) {
+        duplicateFileVersionMap: Map<String, String>,
+        outputDir: File? = null,
+        openOnCompletion: Boolean = true
+    ): File {
         val workTree = GitUtil.parseDir(repoPath, "git")
-        val outputDir = GitUtil.determineDesktopOutputDir()
+        val resolvedOutputDir = outputDir ?: GitUtil.determineDesktopOutputDir()
 
         GitUtil.showProgressAndRun(
             title = "배포 파일 생성",
@@ -61,48 +63,60 @@ class GitInfoCli {
                 val artifactProfile = GitUtil.resolveArtifactProfile(workTree)
                 val allowBuildArtifacts = GitUtil.profileUsesBuildArtifacts(artifactProfile)
 
-                val statusPaths = if (fileStatusType.allowsStatus()) {
-                    collectStatusPaths(git, since, until)
-                } else {
-                    emptyList()
+                val statusPaths = GitUtil.logExtractionPhase(log, "git.collect-status-paths") {
+                    if (fileStatusType.allowsStatus()) {
+                        collectStatusPaths(git, since, until)
+                    } else {
+                        emptyList()
+                    }
                 }
 
-                val diffSelection = if (fileStatusType.allowsDiff()) {
-                    collectDiffSelection(
-                        repo = repo,
-                        since = since,
-                        until = until,
-                        sinceVersion = sinceVersion,
-                        untilVersion = untilVersion,
-                        selectedVersions = selectedVersions,
-                        selectedFiles = selectedFiles,
-                        duplicateFileVersionMap = duplicateFileVersionMap
-                    )
-                } else {
-                    DiffSelection.EMPTY
+                val diffSelection = GitUtil.logExtractionPhase(log, "git.collect-diff-selection") {
+                    if (fileStatusType.allowsDiff()) {
+                        collectDiffSelection(
+                            repo = repo,
+                            since = since,
+                            until = until,
+                            sinceVersion = sinceVersion,
+                            untilVersion = untilVersion,
+                            selectedVersions = selectedVersions,
+                            selectedFiles = selectedFiles,
+                            duplicateFileVersionMap = duplicateFileVersionMap
+                        )
+                    } else {
+                        DiffSelection.EMPTY
+                    }
                 }
 
                 val statusEntries = if (statusPaths.isEmpty()) {
                     emptyList()
                 } else {
                     if (artifactProfile == GitUtil.ArtifactProfile.JVM_CLASS_ONLY && statusPaths.any(::isJvmSourcePath)) {
-                        GitUtil.compileJvmProject(workTree, jdkPath)
+                        GitUtil.logExtractionPhase(log, "git.compile-status-jvm") {
+                            GitUtil.compileJvmProject(workTree, jdkPath, statusPaths)
+                        }
                     }
-                    GitUtil.buildLatestClassMap(workTree, statusPaths)
-                    GitUtil.normalizeExtractionPaths(
-                        workTree,
-                        GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
-                    )
+                    GitUtil.logExtractionPhase(log, "git.build-status-class-map") {
+                        GitUtil.buildLatestClassMap(workTree, statusPaths)
+                    }
+                    GitUtil.logExtractionPhase(log, "git.map-status-extraction-paths") {
+                        GitUtil.normalizeExtractionPaths(
+                            workTree,
+                            GitUtil.mapPathsForExtraction(statusPaths, artifactProfile)
+                        )
+                    }
                 }
 
                 val diffEntries = if (diffSelection.paths.isEmpty()) {
                     emptyList()
                 } else {
-                    when (artifactProfile) {
-                        GitUtil.ArtifactProfile.RAW_FILE_COPY ->
-                            writeSelectedRevisionRawFiles(outputDir, repo, diffSelection.revisionByPath)
-                        GitUtil.ArtifactProfile.JVM_CLASS_ONLY ->
-                            writeSelectedRevisionArtifacts(outputDir, repo, diffSelection.revisionByPath, jdkPath)
+                    GitUtil.logExtractionPhase(log, "git.write-diff-entries") {
+                        when (artifactProfile) {
+                            GitUtil.ArtifactProfile.RAW_FILE_COPY ->
+                                writeSelectedRevisionRawFiles(resolvedOutputDir, repo, diffSelection.revisionByPath)
+                            GitUtil.ArtifactProfile.JVM_CLASS_ONLY ->
+                                writeSelectedRevisionArtifacts(resolvedOutputDir, repo, diffSelection.revisionByPath, jdkPath)
+                        }
                     }
                 }
 
@@ -118,12 +132,16 @@ class GitInfoCli {
                 if (fileStatusType.allowsStatus()) {
                     val selectedDiffEntrySet = diffEntries.toSet()
                     val statusEntriesToCopy = statusEntries.filterNot { it in selectedDiffEntrySet }
-                    GitUtil.addDirectoryEntry(outputDir, workTree, statusEntriesToCopy, allowBuildArtifacts)
+                    GitUtil.logExtractionPhase(log, "git.copy-status-output-files") {
+                        GitUtil.addDirectoryEntry(resolvedOutputDir, workTree, statusEntriesToCopy, allowBuildArtifacts)
+                    }
                 }
 
                 val allEntries = listOf(diffEntries, statusEntries).flatMap { it }.distinct()
-                DeployCliScript().createDeployScript(allEntries, deployServerDir).forEach { (name, line) ->
-                    GitUtil.writeTextOutputFile(outputDir, name, line.joinToString("\n"))
+                GitUtil.logExtractionPhase(log, "git.write-deploy-scripts") {
+                    DeployCliScript().createDeployScript(allEntries, deployServerDir).forEach { (name, line) ->
+                        GitUtil.writeTextOutputFile(resolvedOutputDir, name, line.joinToString("\n"))
+                    }
                 }
 
                 println("Git artifact profile: ${artifactProfile.name}")
@@ -131,9 +149,12 @@ class GitInfoCli {
                 println("Git selected revision files: ${diffSelection.revisionByPath.size}")
             }
 
-            println("Extraction directory created: ${outputDir.absolutePath}")
+            println("Extraction directory created: ${resolvedOutputDir.absolutePath}")
         }
-        GitUtil.notifyCompletionAndOpenDirectory(outputDir, "Git 배포 파일 생성이 완료되었습니다.")
+        if (openOnCompletion) {
+            GitUtil.notifyCompletionAndOpenDirectory(resolvedOutputDir, "Git 배포 파일 생성이 완료되었습니다.")
+        }
+        return resolvedOutputDir
     }
 
     private fun collectStatusPaths(git: Git, since: LocalDate, until: LocalDate): List<String> {
@@ -254,43 +275,55 @@ class GitInfoCli {
             .forEach { (revisionText, paths) ->
                 val snapshotDir = Files.createTempDirectory("deploy-git-revision-").toFile()
                 try {
-                    materializeRevisionSnapshot(repo, revisionText, snapshotDir)
+                    GitUtil.logExtractionPhase(log, "git.materialize-revision-snapshot[$revisionText]") {
+                        materializeRevisionSnapshot(repo, revisionText, snapshotDir)
+                    }
 
                     val sourcePaths = paths.filter(::isJvmSourcePath)
                     val rawPaths = paths.filterNot(::isJvmSourcePath)
                     val resolvedRevisionId = resolveRevisionByPrefix(repo, revisionText)
 
-                    rawPaths.forEach { path ->
-                        val fileBytes = resolvedRevisionId?.let { readFileBytesAtRevision(repo, it, path) }
-                        if (fileBytes != null) {
-                            GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
-                            writtenEntries.add(path)
-                        } else {
-                            System.err.println("[WARN] Git revision file not found: revision=$revisionText, path=$path")
+                    GitUtil.logExtractionPhase(log, "git.write-revision-raw-files[$revisionText]") {
+                        rawPaths.forEach { path ->
+                            val fileBytes = resolvedRevisionId?.let { readFileBytesAtRevision(repo, it, path) }
+                            if (fileBytes != null) {
+                                GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
+                                writtenEntries.add(path)
+                            } else {
+                                System.err.println("[WARN] Git revision file not found: revision=$revisionText, path=$path")
+                            }
                         }
                     }
 
                     if (sourcePaths.isNotEmpty()) {
-                        GitUtil.compileJvmProject(snapshotDir, jdkPath)
-                        GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+                        GitUtil.logExtractionPhase(log, "git.compile-revision-jvm[$revisionText]") {
+                            GitUtil.compileJvmProject(snapshotDir, jdkPath, sourcePaths)
+                        }
+                        GitUtil.logExtractionPhase(log, "git.build-revision-class-map[$revisionText]") {
+                            GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+                        }
                         val mappedEntries = GitUtil.mapPathsForExtraction(sourcePaths, GitUtil.ArtifactProfile.JVM_CLASS_ONLY)
-                        val actualEntries = GitUtil.addZipEntryName(
-                            baseDir = snapshotDir,
-                            paths = mappedEntries,
-                            allowBuildArtifacts = true
-                        ).toList()
+                        val actualEntries = GitUtil.logExtractionPhase(log, "git.collect-revision-artifact-entries[$revisionText]") {
+                            GitUtil.addZipEntryName(
+                                baseDir = snapshotDir,
+                                paths = mappedEntries,
+                                allowBuildArtifacts = true
+                            ).toList()
+                        }
                         if (actualEntries.isEmpty()) {
                             System.err.println(
                                 "[WARN] No Git class artifacts copied: revision=$revisionText, " +
                                     "sources=${sourcePaths.joinToString(",")}, mapped=${mappedEntries.joinToString(",")}"
                             )
                         }
-                        GitUtil.addDirectoryEntry(
-                            targetDir = outputDir,
-                            baseDir = snapshotDir,
-                            paths = mappedEntries,
-                            allowBuildArtifacts = true
-                        )
+                        GitUtil.logExtractionPhase(log, "git.copy-revision-artifacts[$revisionText]") {
+                            GitUtil.addDirectoryEntry(
+                                targetDir = outputDir,
+                                baseDir = snapshotDir,
+                                paths = mappedEntries,
+                                allowBuildArtifacts = true
+                            )
+                        }
                         writtenEntries.addAll(actualEntries)
                     }
                 } finally {

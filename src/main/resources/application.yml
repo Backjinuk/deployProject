@@ -1,40 +1,36 @@
-name: deployProject
+name: deployKit
 
 server:
   port: 9090
   tomcat:
-    connection-timeout: 600000
+    connection-timeout: 1800000
+
+logging:
+  file:
+    name: "${DEPLOY_PROJECT_LOG_FILE:${user.home}/.deploy-project/logs/deploy-project.log}"
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
 
 spring:
   main:
     headless: false
   mvc:
     async:
-      request-timeout: 120000
-  datasource:
-    url: jdbc:mysql://backjin.iptime.org:3306/deployDB
-    username: deployMan
-    password: deploy123
-
-
-
-  jpa:
-    show-sql: true
-    hibernate:
-      ddl-auto: update
-  jooq:
-    sql-dialect: MYSQL
+      request-timeout: 1800000
 
 deploy:
   client:
     ui-mode: ${DEPLOY_PROJECT_UI_MODE:DOWNLOAD}
-    server-api-mode: ${DEPLOY_PROJECT_SERVER_API_MODE:REMOTE}
-    remote-api-base-url: ${DEPLOY_PROJECT_REMOTE_API_BASE_URL:https://deploy.jinuk.dev}
-    installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:https://deploy.jinuk.dev/download/deploy-project.exe}
+    installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:}
+    latest-version-url: ${DEPLOY_PROJECT_LATEST_VERSION_URL:https://deploy.jinukl.dev/version.json}
   download:
     installer-path: ${DEPLOY_PROJECT_INSTALLER_PATH:}
-    installer-dir: ${DEPLOY_PROJECT_INSTALLER_DIR:/mnt/toshiba1t/application/deployProject/download}
+    installer-dir: ${DEPLOY_PROJECT_INSTALLER_DIR:}
     installer-file-name: ${DEPLOY_PROJECT_INSTALLER_FILE_NAME:}
+  storage:
+    sites-file: ${DEPLOY_PROJECT_SITES_FILE:}
 
 fgivpnT5008:
   iptime:

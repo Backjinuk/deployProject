@@ -1,21 +1,15 @@
 import axios from "axios";
 
-const DEFAULT_API_PORT = process.env.REACT_APP_API_PORT || "9090";
-const LOCAL_API_BASE_URL = `http://localhost:${DEFAULT_API_PORT}`;
-const PRODUCTION_API_BASE_URL =
-    process.env.REACT_APP_PRODUCTION_API_BASE_URL || `https://deploy.jinuk.dev`;
-    // process.env.REACT_APP_PRODUCTION_API_BASE_URL || `http://backjin.iptime.org:${DEFAULT_API_PORT}`;
-const INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
-const PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL = "https://deploy.jinuk.dev";
-
-type ServerApiMode = "LOCAL" | "REMOTE";
+const INSTALLER_DOWNLOAD_PATH = "/download/deploykit.exe";
+const LEGACY_INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
+const PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL = "https://deploy.jinukl.dev";
+const DEFAULT_LATEST_VERSION_URL = `${PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL}/version.json`;
 
 type DeployProjectRuntimeConfig = {
     uiMode?: string;
-    serverApiMode?: string;
-    remoteApiBaseUrl?: string;
-    localApiBaseUrl?: string;
     installerDownloadUrl?: string;
+    appVersion?: string;
+    latestVersionUrl?: string;
 };
 
 declare global {
@@ -24,7 +18,6 @@ declare global {
     }
 }
 
-const normalizeBaseUrl = (value?: string) => (value ?? "").trim().replace(/\/+$/, "");
 const isBrowser = typeof window !== "undefined";
 
 const isLocalHost = (hostname: string) => hostname === "localhost" || hostname === "127.0.0.1";
@@ -38,17 +31,18 @@ const isLocalBrowser = () => {
 
 const isInstallerDownloadPath = (value: string) => {
     const trimmed = value.trim();
-    if (trimmed === INSTALLER_DOWNLOAD_PATH) return true;
+    if (trimmed === INSTALLER_DOWNLOAD_PATH || trimmed === LEGACY_INSTALLER_DOWNLOAD_PATH) return true;
 
     try {
-        return new URL(trimmed, PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL).pathname === INSTALLER_DOWNLOAD_PATH;
+        const pathname = new URL(trimmed, PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL).pathname;
+        return pathname === INSTALLER_DOWNLOAD_PATH || pathname === LEGACY_INSTALLER_DOWNLOAD_PATH;
     } catch {
         return false;
     }
 };
 
-const resolveInstallerDownloadUrl = (value: string) => {
-    const trimmed = value.trim();
+const resolveInstallerDownloadUrl = (value?: string) => {
+    const trimmed = (value ?? "").trim();
     if (!trimmed) return `${PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL}${INSTALLER_DOWNLOAD_PATH}`;
 
     if (!isLocalBrowser() && isInstallerDownloadPath(trimmed)) {
@@ -58,34 +52,20 @@ const resolveInstallerDownloadUrl = (value: string) => {
     return trimmed;
 };
 
-const defaultRemoteApiBaseUrl = () => {
-    return isLocalBrowser() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL;
-};
-
 const runtimeConfig = typeof window !== "undefined" ? window.__DEPLOY_PROJECT_CONFIG__ : undefined;
-const configuredMode = (runtimeConfig?.serverApiMode || process.env.REACT_APP_SERVER_API_MODE || "LOCAL").toUpperCase();
 const configuredUiMode = (runtimeConfig?.uiMode || process.env.REACT_APP_UI_MODE || "APP").toUpperCase();
 
 export const uiMode = configuredUiMode === "DOWNLOAD" ? "DOWNLOAD" : "APP";
-export const serverApiMode: ServerApiMode = configuredMode === "REMOTE" ? "REMOTE" : "LOCAL";
-export const remoteApiBaseUrl = normalizeBaseUrl(
-    runtimeConfig?.remoteApiBaseUrl || process.env.REACT_APP_REMOTE_API_BASE_URL || defaultRemoteApiBaseUrl()
-);
-export const serverApiBaseUrl = serverApiMode === "REMOTE" ? remoteApiBaseUrl : "";
-export const localApiBaseUrl = normalizeBaseUrl(
-    runtimeConfig?.localApiBaseUrl ||
-        process.env.REACT_APP_LOCAL_API_BASE_URL ||
-        (uiMode === "APP" ? "" : defaultRemoteApiBaseUrl())
-);
 export const installerDownloadUrl =
-    resolveInstallerDownloadUrl(
-        runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL || `${remoteApiBaseUrl}${INSTALLER_DOWNLOAD_PATH}`
-    );
+    resolveInstallerDownloadUrl(runtimeConfig?.installerDownloadUrl || process.env.REACT_APP_INSTALLER_DOWNLOAD_URL);
+export const appVersion = runtimeConfig?.appVersion || process.env.REACT_APP_APP_VERSION || "0.0.0";
+export const latestVersionUrl =
+    runtimeConfig?.latestVersionUrl || process.env.REACT_APP_LATEST_VERSION_URL || DEFAULT_LATEST_VERSION_URL;
 
 export const serverApi = axios.create({
-    baseURL: serverApiBaseUrl,
+    baseURL: "",
 });
 
 export const localApi = axios.create({
-    baseURL: localApiBaseUrl,
+    baseURL: "",
 });
