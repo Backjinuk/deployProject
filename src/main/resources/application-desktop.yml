@@ -16,6 +16,6 @@ deploy:
   client:
     ui-mode: ${DEPLOY_PROJECT_UI_MODE:APP}
     installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:}
-    latest-version-url: ${DEPLOY_PROJECT_LATEST_VERSION_URL:https://deploy.jinukl.dev/version.json}
+    latest-version-url: ${DEPLOY_PROJECT_LATEST_VERSION_URL:https://deploy.jinuk.dev/version.json}
   storage:
     sites-file: ${DEPLOY_PROJECT_SITES_FILE:}

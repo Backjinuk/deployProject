@@ -2,7 +2,7 @@ import axios from "axios";
 
 const INSTALLER_DOWNLOAD_PATH = "/download/deploykit.exe";
 const LEGACY_INSTALLER_DOWNLOAD_PATH = "/download/deploy-project.exe";
-const PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL = "https://deploy.jinukl.dev";
+const PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL = "https://deploy.jinuk.dev";
 const DEFAULT_LATEST_VERSION_URL = `${PRODUCTION_INSTALLER_DOWNLOAD_BASE_URL}/version.json`;
 
 type DeployProjectRuntimeConfig = {

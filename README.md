@@ -124,7 +124,7 @@ Windows EXE 인스톨러 생성을 위해서는 JDK 17의 `jpackage`와 WiX Tool
 
 ## 배포 파일 제공
 
-운영 다운로드 페이지는 `https://deploy.jinukl.dev` 기준으로 동작합니다.
+운영 다운로드 페이지는 `https://deploy.jinuk.dev` 기준으로 동작합니다.
 
 관련 파일:
 

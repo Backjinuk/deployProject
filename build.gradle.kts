@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "com.deployproject"
-version = "1.0.31"
+version = "1.0.32"
 
 val hostOsName = System.getProperty("os.name").lowercase()
 val hostOsArch = System.getProperty("os.arch").lowercase()
@@ -147,7 +147,7 @@ val desktopOutputDir = layout.buildDirectory.dir("jpackage-output")
 val desktopResourceDir = layout.projectDirectory.dir("src/jpackage/windows")
 val desktopAppName = "DeployKit"
 val desktopIconFile = desktopResourceDir.file("deploykit.ico")
-val publicInstallerBaseUrl = "https://deploy.jinukl.dev"
+val publicInstallerBaseUrl = "https://deploy.jinuk.dev"
 // Must match the UpgradeCode used by the 1.0.1 installer already installed in the field.
 // Changing this value makes Windows register a separate installed application.
 val desktopUpgradeUuid = "38e6d8ad-6b96-3ed4-83b5-5d4f53becef9"

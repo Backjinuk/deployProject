@@ -22,7 +22,7 @@ class ClientRuntimeConfigController(
     private val latestVersionUrl: String
 ) {
     private val buildProperties = buildPropertiesProvider.ifAvailable
-    private val productionPublicBaseUrl = "https://deploy.jinukl.dev"
+    private val productionPublicBaseUrl = "https://deploy.jinuk.dev"
     private val installerDownloadPath = "/download/deploykit.exe"
 
     @GetMapping("/runtime-config.js", produces = ["application/javascript;charset=UTF-8"])

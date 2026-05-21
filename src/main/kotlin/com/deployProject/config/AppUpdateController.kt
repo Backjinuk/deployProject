@@ -18,13 +18,13 @@ import java.util.concurrent.TimeUnit
 class AppUpdateController(
     private val objectMapper: ObjectMapper,
     buildPropertiesProvider: ObjectProvider<BuildProperties>,
-    @Value("\${deploy.client.latest-version-url:https://deploy.jinukl.dev/version.json}")
+    @Value("\${deploy.client.latest-version-url:https://deploy.jinuk.dev/version.json}")
     private val latestVersionUrl: String,
     @Value("\${deploy.client.installer-download-url:}")
     private val installerDownloadUrl: String
 ) {
     private val buildProperties = buildPropertiesProvider.ifAvailable
-    private val fallbackInstallerUrl = "https://deploy.jinukl.dev/download/deploykit.exe"
+    private val fallbackInstallerUrl = "https://deploy.jinuk.dev/download/deploykit.exe"
 
     @GetMapping("/api/app/update-check")
     fun updateCheck(): ResponseEntity<AppUpdateResponse> {

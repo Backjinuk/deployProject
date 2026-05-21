@@ -42,6 +42,12 @@ class DownloadController(
     @Value("\${deploy.download.installer-file-name:}")
     private val installerFileName: String
 ) {
+    private val knownInstallerFileNames = listOf(
+        "DeployKit.exe",
+        "deploykit.exe",
+        "DeployProject.exe",
+        "deploy-project.exe"
+    )
 
     @GetMapping("/download/deploykit.exe", "/download/deploy-project.exe")
     fun downloadInstaller(): ResponseEntity<Any> {
@@ -99,20 +105,23 @@ class DownloadController(
         configuredInstallerPaths().forEach { candidates.add(it) }
         configuredInstallerDirs().forEach { installerDir ->
             findLatestInstallerInDir(installerDir)?.let { candidates.add(it) }
-            candidates.add(installerDir.resolve("DeployKit.exe").normalize())
-            candidates.add(installerDir.resolve("DeployProject.exe").normalize())
+            addKnownInstallerCandidates(candidates, installerDir)
         }
 
         baseDirs().forEach { baseDir ->
             findLatestJpackageInstaller(baseDir)?.let { candidates.add(it) }
-            candidates.add(baseDir.resolve("build/download/DeployKit.exe").normalize())
-            candidates.add(baseDir.resolve("build/download/DeployProject.exe").normalize())
+            addKnownInstallerCandidates(candidates, baseDir.resolve("build/download"))
             findLatestInstallerInDir(baseDir.resolve("download"))?.let { candidates.add(it) }
-            candidates.add(baseDir.resolve("download/DeployKit.exe").normalize())
-            candidates.add(baseDir.resolve("download/DeployProject.exe").normalize())
+            addKnownInstallerCandidates(candidates, baseDir.resolve("download"))
         }
 
         return candidates.toList()
+    }
+
+    private fun addKnownInstallerCandidates(candidates: MutableSet<Path>, dir: Path) {
+        knownInstallerFileNames.forEach { fileName ->
+            candidates.add(dir.resolve(fileName).normalize())
+        }
     }
 
     private fun configuredInstallerPaths(): List<Path> {
@@ -152,15 +161,20 @@ class DownloadController(
         return Files.list(dir).use { paths ->
             paths
                 .filter { Files.isRegularFile(it) }
-                .filter {
-                    it.name == "DeployKit.exe" ||
-                        it.name == "DeployProject.exe" ||
-                        (it.name.startsWith("DeployKit-") && it.name.endsWith(".exe")) ||
-                        (it.name.startsWith("DeployProject-") && it.name.endsWith(".exe"))
-                }
+                .filter { isInstallerFileName(it.name) }
                 .max(Comparator.comparing { Files.getLastModifiedTime(it) })
                 .orElse(null)
         }
+    }
+
+    private fun isInstallerFileName(fileName: String): Boolean {
+        val normalized = fileName.lowercase()
+        return normalized == "deploykit.exe" ||
+            normalized == "deployproject.exe" ||
+            normalized == "deploy-project.exe" ||
+            (normalized.startsWith("deploykit-") && normalized.endsWith(".exe")) ||
+            (normalized.startsWith("deployproject-") && normalized.endsWith(".exe")) ||
+            (normalized.startsWith("deploy-project-") && normalized.endsWith(".exe"))
     }
 
     private fun baseDirs(): List<Path> {
