@@ -9,6 +9,7 @@ import com.deployProject.deploy.domain.extraction.RepositoryDuplicateFileDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionFileListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionOptionDto
+import jakarta.annotation.PostConstruct
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
@@ -75,6 +76,13 @@ class ExtractionService {
 
     private val versionDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
+    @PostConstruct
+    fun cleanupExtractionWorkspaceOnStartup() {
+        GitUtil.logExtractionPhase(logger, "cleanup-extraction-workspace-on-startup") {
+            cleanupExtractionDirs(deleteAll = true)
+        }
+    }
+
     /** Main entry point for package generation. */
     fun extractGitInfo(extractionDto: ExtractionDto): File {
         GitUtil.logExtractionPhase(logger, "cleanup-stale-extraction-dirs") {
@@ -122,40 +130,47 @@ class ExtractionService {
         }
 
         // 1. Create a per-request working directory.
-        val baseDir = GitUtil.logExtractionPhase(logger, "prepare-work-directory") {
-            resolveBaseDir()
-        }
-        val outputDir = GitUtil.logExtractionPhase(logger, "prepare-output-directory") {
-            File(baseDir, "deploy-output").apply { recreateDir() }
-        }
-
-        // 2. Execute the extraction immediately on the local desktop server.
-        GitUtil.logExtractionPhase(logger, "run-local-extraction") {
-            GitUtil.withoutProgressDialog {
-                runLocalExtraction(
-                    extractionDto = extractionDto,
-                    repositoryContext = repositoryContext,
-                    outputDir = outputDir,
-                    selectedVersions = selectedVersions,
-                    selectedFiles = selectedFiles,
-                    duplicateFileVersionMap = duplicateFileVersionMap
-                )
+        var baseDir: File? = null
+        try {
+            val workDir = GitUtil.logExtractionPhase(logger, "prepare-work-directory") {
+                resolveBaseDir()
             }
-        }
-        logger.info("Deploy extraction output prepared: output={}", outputDir.absolutePath)
+            baseDir = workDir
+            val outputDir = GitUtil.logExtractionPhase(logger, "prepare-output-directory") {
+                File(workDir, "deploy-output").apply { recreateDir() }
+            }
 
-        // 3. Zip the final package directory.
-        val zipFile = File(baseDir, "deploy-package-$targetName.zip")
-        GitUtil.logExtractionPhase(logger, "zip-output-directory") {
-            zipDirectory(outputDir, zipFile)
-        }
-        logger.info(
-            "Deploy package generation finished: zip={}, sizeBytes={}",
-            zipFile.absolutePath,
-            zipFile.length()
-        )
+            // 2. Execute the extraction immediately on the local desktop server.
+            GitUtil.logExtractionPhase(logger, "run-local-extraction") {
+                GitUtil.withoutProgressDialog {
+                    runLocalExtraction(
+                        extractionDto = extractionDto,
+                        repositoryContext = repositoryContext,
+                        outputDir = outputDir,
+                        selectedVersions = selectedVersions,
+                        selectedFiles = selectedFiles,
+                        duplicateFileVersionMap = duplicateFileVersionMap
+                    )
+                }
+            }
+            logger.info("Deploy extraction output prepared: output={}", outputDir.absolutePath)
 
-        return zipFile
+            // 3. Zip the final package directory.
+            val zipFile = File(workDir, "deploy-package-$targetName.zip")
+            GitUtil.logExtractionPhase(logger, "zip-output-directory") {
+                zipDirectory(outputDir, zipFile)
+            }
+            logger.info(
+                "Deploy package generation finished: zip={}, sizeBytes={}",
+                zipFile.absolutePath,
+                zipFile.length()
+            )
+
+            return zipFile
+        } catch (error: Throwable) {
+            baseDir?.let { cleanupExtractionWorkDirectory(it) }
+            throw error
+        }
     }
 
     private fun runLocalExtraction(
@@ -224,17 +239,22 @@ class ExtractionService {
 
     fun cleanupExtractionArtifacts(zipFile: File) {
         val workDir = zipFile.parentFile ?: return
+        cleanupExtractionWorkDirectory(workDir)
+    }
+
+    private fun cleanupExtractionWorkDirectory(workDir: File) {
         val workDirPath = runCatching { workDir.toPath().toRealPath() }.getOrElse { return }
-        val managedRoot = runCatching {
-            Files.createDirectories(extractionWorkRoot)
-            extractionWorkRoot.toRealPath()
-        }.getOrElse { return }
+        val managedRoots = managedExtractionRoots()
 
         // Only delete managed extraction work directories.
-        if (!workDirPath.startsWith(managedRoot)) return
+        if (managedRoots.none { workDirPath.startsWith(it) }) return
 
         runCatching {
             workDir.deleteRecursively()
+            val workDirParent = workDirPath.parent
+            managedRoots
+                .filter { root -> workDirParent == root }
+                .forEach { root -> deleteDirectoryIfEmpty(root.toFile()) }
         }.onFailure { error ->
             logger.warn("Failed to cleanup extraction work directory: {}", workDir.absolutePath, error)
         }
@@ -628,25 +648,46 @@ class ExtractionService {
 
     /** Removes stale extraction work directories left by older requests. */
     private fun cleanupStaleExtractionDirs() {
+        cleanupExtractionDirs(deleteAll = false)
+    }
+
+    private fun cleanupExtractionDirs(deleteAll: Boolean) {
         runCatching {
-            Files.createDirectories(extractionWorkRoot)
             val expireBefore = System.currentTimeMillis() - STALE_WORK_DIR_RETENTION_HOURS * 60 * 60 * 1000
-            cleanupStaleDirsUnder(extractionWorkRoot.toFile(), expireBefore)
-            cleanupStaleDirsUnder(File("GitInfoJarFile"), expireBefore)
+            cleanupDirsUnder(extractionWorkRoot.toFile(), expireBefore, deleteAll)
+            cleanupDirsUnder(File("GitInfoJarFile"), expireBefore, deleteAll)
         }.onFailure { error ->
             logger.warn("Failed to cleanup stale extraction directories: {}", extractionWorkRoot, error)
         }
     }
 
-    private fun cleanupStaleDirsUnder(root: File, expireBefore: Long) {
+    private fun cleanupDirsUnder(root: File, expireBefore: Long, deleteAll: Boolean) {
         if (!root.exists() || !root.isDirectory) return
         root.listFiles()
             ?.asSequence()
-            ?.filter { it.isDirectory }
-            ?.filter { it.lastModified() < expireBefore }
-            ?.forEach { oldDir ->
-                oldDir.deleteRecursively()
+            ?.filter { deleteAll || it.lastModified() < expireBefore }
+            ?.forEach { oldArtifact ->
+                oldArtifact.deleteRecursively()
             }
+        deleteDirectoryIfEmpty(root)
+    }
+
+    private fun managedExtractionRoots(): List<Path> {
+        return listOf(
+            extractionWorkRoot,
+            Path.of("GitInfoJarFile").toAbsolutePath().normalize()
+        ).mapNotNull { root ->
+            runCatching {
+                if (Files.exists(root)) root.toRealPath() else root.toAbsolutePath().normalize()
+            }.getOrNull()
+        }.distinct()
+    }
+
+    private fun deleteDirectoryIfEmpty(dir: File) {
+        if (!dir.exists() || !dir.isDirectory) return
+        if (dir.listFiles()?.isEmpty() == true) {
+            dir.delete()
+        }
     }
 
     private fun zipDirectory(sourceDir: File, targetZip: File) {

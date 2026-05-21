@@ -28,6 +28,24 @@ function App() {
 
     useEffect(() => {
         if (uiMode !== "APP") return;
+        if (new URLSearchParams(window.location.search).get("desktopWindow") !== "edge-app") return;
+
+        const shutdownLocalServer = () => {
+            const url = "/api/app/shutdown";
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon(url, new Blob([], { type: "application/json" }));
+                return;
+            }
+
+            fetch(url, { method: "POST", keepalive: true }).catch(() => undefined);
+        };
+
+        window.addEventListener("pagehide", shutdownLocalServer);
+        return () => window.removeEventListener("pagehide", shutdownLocalServer);
+    }, []);
+
+    useEffect(() => {
+        if (uiMode !== "APP") return;
 
         let cancelled = false;
 

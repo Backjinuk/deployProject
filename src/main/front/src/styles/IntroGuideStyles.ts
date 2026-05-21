@@ -11,7 +11,6 @@ export const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        backdropFilter: "blur(3px)",
     },
     dialog: {
         width: "min(1180px, calc(100vw - 1.4rem))",
@@ -20,7 +19,7 @@ export const styles: Record<string, CSSProperties> = {
         background: theme.bgSurface,
         borderRadius: "16px",
         border: `1px solid ${theme.borderSoft}`,
-        boxShadow: "0 22px 70px rgba(15, 23, 42, 0.28)",
+        boxShadow: theme.shadowSoft,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

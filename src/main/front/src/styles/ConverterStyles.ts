@@ -53,7 +53,6 @@ export const styles: Record<string, CSSProperties> = {
         boxShadow: theme.shadowSoft,
         padding: "0.95rem",
         margin: "0 auto 0.82rem",
-        backdropFilter: "blur(6px)",
         width: "100%",
         flexShrink: 0,
     },

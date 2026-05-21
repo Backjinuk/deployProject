@@ -7,6 +7,8 @@ class ExtractionDto {
 
     var siteId : Long? = null
 
+    var siteName : String? = null
+
     var since : String? = null
 
     var until : String? = null

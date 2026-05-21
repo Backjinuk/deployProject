@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "com.deployproject"
-version = "1.0.34"
+version = "1.1.0"
 
 val hostOsName = System.getProperty("os.name").lowercase()
 val hostOsArch = System.getProperty("os.arch").lowercase()
@@ -44,6 +44,11 @@ repositories {
     maven("https://artifactory.nimblygames.com/artifactory/ng-public-release/")
 }
 
+val compileSupportLibs by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
 dependencies {
     // Kotlin 표준 라이브러리 명시적 추가
     implementation(kotlin("stdlib-jdk8"))
@@ -59,6 +64,7 @@ dependencies {
     implementation("org.openjfx:javafx-controls:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-media:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-web:$javafxVersion:$javafxPlatform")
+    implementation("org.eclipse.platform:org.eclipse.swt.win32.win32.x86_64:3.132.0")
 
     // Lombok (컴파일 타임만)
     compileOnly("org.projectlombok:lombok")
@@ -69,6 +75,7 @@ dependencies {
     // Git & SVN
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.7.0.202309050840-r")
     implementation("org.tmatesoft.svnkit:svnkit:1.10.3")
+    compileSupportLibs("javax.servlet:javax.servlet-api:3.1.0")
 
     // 테스트
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -142,8 +149,10 @@ fun resolveWixBinDir(): File? {
 val frontendDir = layout.projectDirectory.dir("src/main/front")
 val frontendBuildDir = frontendDir.dir("build")
 val generatedFrontendResourcesDir = layout.buildDirectory.dir("generated/frontend-resources")
+val generatedCompileSupportResourcesDir = layout.buildDirectory.dir("generated/compile-support-resources")
 val desktopInputDir = layout.buildDirectory.dir("jpackage-input")
 val desktopOutputDir = layout.buildDirectory.dir("jpackage-output")
+val publicDownloadDir = layout.projectDirectory.dir("download")
 val desktopResourceDir = layout.projectDirectory.dir("src/jpackage/windows")
 val desktopAppName = "DeployKit"
 val desktopIconFile = desktopResourceDir.file("deploykit.ico")
@@ -203,14 +212,23 @@ tasks.register<Sync>("copyFrontendBuild") {
     into(generatedFrontendResourcesDir.map { it.dir("static") })
 }
 
+tasks.register<Sync>("copyCompileSupportLibs") {
+    group = "build"
+    description = "Copies compile-only support jars used by the local extraction compiler."
+    from(compileSupportLibs)
+    into(generatedCompileSupportResourcesDir.map { it.dir("compile-libs") })
+}
+
 sourceSets {
     main {
         resources.srcDir(generatedFrontendResourcesDir)
+        resources.srcDir(generatedCompileSupportResourcesDir)
     }
 }
 
 tasks.named("processResources") {
     dependsOn("copyFrontendBuild")
+    dependsOn("copyCompileSupportLibs")
 }
 
 tasks.register<Sync>("prepareDesktopImageInput") {
@@ -305,14 +323,28 @@ tasks.register<Exec>("desktopInstaller") {
             into(layout.buildDirectory.dir("download"))
             rename { "$desktopAppName.exe" }
         }
+        copy {
+            from(installer)
+            into(publicDownloadDir)
+            rename { "$desktopAppName.exe" }
+        }
     }
 }
 
 tasks.register<Sync>("installerDownloadFile") {
     group = "distribution"
-    description = "Copies the Windows installer to build/download/$desktopAppName.exe for the download server."
+    description = "Copies the Windows installer to download folders for the download server."
     dependsOn("desktopInstaller")
     from(desktopOutputDir.map { it.file("$desktopAppName-${project.version}.exe") })
     into(layout.buildDirectory.dir("download"))
+    rename { "$desktopAppName.exe" }
+}
+
+tasks.register<Sync>("publicInstallerDownloadFile") {
+    group = "distribution"
+    description = "Copies the Windows installer to the project-root download folder served in production."
+    dependsOn("desktopInstaller")
+    from(desktopOutputDir.map { it.file("$desktopAppName-${project.version}.exe") })
+    into(publicDownloadDir)
     rename { "$desktopAppName.exe" }
 }

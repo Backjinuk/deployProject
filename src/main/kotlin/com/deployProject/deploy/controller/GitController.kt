@@ -5,6 +5,7 @@ import com.deployProject.deploy.domain.extraction.RepositoryVersionFileListDto
 import com.deployProject.deploy.domain.extraction.RepositoryVersionListDto
 import com.deployProject.deploy.service.ExtractionService
 import org.slf4j.LoggerFactory
+import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -49,6 +50,7 @@ class GitController(
     @PostMapping("/extraction")
     fun extractGitInfoStream(@RequestBody dto: ExtractionDto): ResponseEntity<StreamingResponseBody> {
         val zipFile: File = extractionService.extractGitInfo(dto)
+        val downloadFileName = packageFileName(dto)
 
         val streamBody = StreamingResponseBody { outputStream ->
             try {
@@ -70,7 +72,10 @@ class GitController(
         }
 
         return ResponseEntity.ok()
-            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"${zipFile.name}\"")
+            .header(
+                HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment().filename(downloadFileName, Charsets.UTF_8).build().toString()
+            )
             .contentType(MediaType.APPLICATION_OCTET_STREAM)
             .contentLength(zipFile.length())
             .body(streamBody)
@@ -81,7 +86,7 @@ class GitController(
         val zipFile: File = extractionService.extractGitInfo(dto)
 
         return try {
-            val savedFile = copyToDownloads(zipFile)
+            val savedFile = copyToDownloads(zipFile, packageFileName(dto))
             logger.info("Deploy package saved to local downloads: {}", savedFile.toAbsolutePath())
 
             ExtractionSaveResponse(
@@ -94,17 +99,31 @@ class GitController(
         }
     }
 
-    private fun copyToDownloads(source: File): Path {
+    private fun copyToDownloads(source: File, fileName: String): Path {
         val homeDir = Path.of(System.getProperty("user.home", "."))
         val downloadsDir = homeDir.resolve("Downloads")
         val targetDir = if (Files.exists(downloadsDir) && !Files.isDirectory(downloadsDir)) homeDir else downloadsDir
 
         Files.createDirectories(targetDir)
 
-        val target = uniqueDownloadTarget(targetDir, source.name)
+        val target = uniqueDownloadTarget(targetDir, fileName)
         Files.copy(source.toPath(), target, StandardCopyOption.REPLACE_EXISTING)
 
         return target
+    }
+
+    private fun packageFileName(dto: ExtractionDto): String {
+        val siteName = dto.siteName
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.replace(INVALID_FILE_NAME_CHARS, "_")
+            ?.replace(WHITESPACE_CHARS, "_")
+            ?.trim('_', '.', ' ')
+            ?.takeIf { it.isNotEmpty() }
+            ?: "deploy-package"
+        val timestamp = PACKAGE_TIMESTAMP_FORMATTER.format(LocalDateTime.now())
+
+        return "${siteName}_$timestamp.zip"
     }
 
     private fun uniqueDownloadTarget(targetDir: Path, fileName: String): Path {
@@ -130,5 +149,8 @@ class GitController(
 
     companion object {
         private val DOWNLOAD_TIMESTAMP_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+        private val PACKAGE_TIMESTAMP_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmm")
+        private val INVALID_FILE_NAME_CHARS = Regex("""[\\/:*?"<>|]""")
+        private val WHITESPACE_CHARS = Regex("""\s+""")
     }
 }

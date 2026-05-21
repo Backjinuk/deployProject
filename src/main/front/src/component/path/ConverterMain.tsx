@@ -4,7 +4,7 @@ import Swal from "sweetalert2";
 
 import { Site } from "../../api/sites";
 import { appVersion, serverApi } from "../../api/http";
-import SiteSelector from "./StieSelector";
+import SiteSelector from "./SiteSelector";
 import PathConverter from "./PathConverter";
 import PathUpdateModal from "../pathModal/PathUpdateModal";
 import PathAddModal from "../pathModal/PathAddModal";
@@ -22,6 +22,12 @@ type PathBackupSite = Pick<Site, "id" | "text" | "homePath" | "localPath" | "jdk
 type ImportedPathSite = Pick<Site, "text" | "homePath" | "localPath"> & Pick<Partial<Site>, "jdkPath">;
 type PathIdentitySite = Pick<Site, "text" | "homePath" | "localPath">;
 type ThemeMode = "light" | "dark";
+type SupportLogExportResponse = {
+    fileName: string;
+    path: string;
+    size: number;
+    logFileCount: number;
+};
 
 type ConverterMainProps = {
     themeMode: ThemeMode;
@@ -166,19 +172,21 @@ const ConverterMain: React.FC<ConverterMainProps> = ({ themeMode, onToggleThemeM
 
     useEffect(() => {
         let cancelled = false;
-
-        checkForAppUpdate().then((result) => {
-            if (cancelled) return;
-            setUpdateInfo(result);
-            if (result) {
-                setShowUpdateBanner(
-                    localStorage.getItem(UPDATE_DISMISSED_VERSION_STORAGE_KEY) !== result.latestVersion
-                );
-            }
-        });
+        const timer = window.setTimeout(() => {
+            checkForAppUpdate().then((result) => {
+                if (cancelled) return;
+                setUpdateInfo(result);
+                if (result) {
+                    setShowUpdateBanner(
+                        localStorage.getItem(UPDATE_DISMISSED_VERSION_STORAGE_KEY) !== result.latestVersion
+                    );
+                }
+            });
+        }, 3000);
 
         return () => {
             cancelled = true;
+            window.clearTimeout(timer);
         };
     }, []);
 
@@ -335,8 +343,39 @@ const ConverterMain: React.FC<ConverterMainProps> = ({ themeMode, onToggleThemeM
         }
     };
 
+    const exportErrorLogs = async () => {
+        setIsContactMenuOpen(false);
+
+        Swal.fire({
+            title: "에러 로그 추출 중",
+            text: "로그 파일을 ZIP으로 묶어 Downloads 폴더에 저장하고 있습니다.",
+            allowOutsideClick: false,
+            allowEscapeKey: false,
+            didOpen: () => Swal.showLoading(),
+        });
+
+        try {
+            const response = await serverApi.post<SupportLogExportResponse>("/api/support/logs/export");
+            const { path, fileName, logFileCount } = response.data;
+
+            await Swal.fire({
+                icon: "success",
+                title: "에러 로그 추출 완료",
+                text: `${path || fileName} (${logFileCount}개 로그 포함)`,
+                confirmButtonText: "확인",
+            });
+        } catch (error) {
+            console.error("support log export failed", error);
+            await Swal.fire({
+                icon: "error",
+                title: "에러 로그 추출 실패",
+                text: "로그 파일을 생성하지 못했습니다. 앱을 다시 실행한 뒤 재시도해 주세요.",
+            });
+        }
+    };
+
     return (
-        <div style={styles.wrapper}>
+        <div style={styles.wrapper} className={isPathMenuOpen ? "path-menu-open" : undefined}>
             <div style={styles.container}>
                 <IntroGuideModal show={showIntroGuideModal} onClose={closeIntroGuide} />
                 <PathUpdateModal show={showPathUpdateModal} onPath={handlePathUpdateClose} />
@@ -364,11 +403,9 @@ const ConverterMain: React.FC<ConverterMainProps> = ({ themeMode, onToggleThemeM
                         </button>
                         {updateInfo ? (
                             <button className="update-pill" type="button" onClick={handleUpdateClick}>
-                                새 버전 {updateInfo.latestVersion}
+                                새 버전 받기
                             </button>
-                        ) : (
-                            <span className="version-pill">v{appVersion}</span>
-                        )}
+                        ) : null}
                         <button className="action-btn secondary" onClick={() => setShowIntroGuideModal(true)}>
                             사용 안내
                         </button>
@@ -437,6 +474,18 @@ const ConverterMain: React.FC<ConverterMainProps> = ({ themeMode, onToggleThemeM
                                         <strong>경로 가져오기</strong>
                                         <small>백업 JSON 불러오기</small>
                                     </button>
+                                    <button
+                                        type="button"
+                                        className="header-menu-item"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            setIsPathMenuOpen(false);
+                                            exportErrorLogs();
+                                        }}
+                                    >
+                                        <strong>에러 로그 추출</strong>
+                                        <small>문의용 ZIP 파일 저장</small>
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -486,7 +535,7 @@ const ConverterMain: React.FC<ConverterMainProps> = ({ themeMode, onToggleThemeM
 
                 {selected && (
                     <div style={styles.customCardPath}>
-                        <PathConverter site={selected} />
+                        <PathConverter site={selected} suspendScrollbars={isPathMenuOpen} />
                     </div>
                 )}
 
@@ -521,6 +570,14 @@ const ConverterMain: React.FC<ConverterMainProps> = ({ themeMode, onToggleThemeM
                                     >
                                         Email
                                     </a>
+                                    <button
+                                        type="button"
+                                        className="app-contact-link app-contact-button"
+                                        role="menuitem"
+                                        onClick={exportErrorLogs}
+                                    >
+                                        에러 로그 추출
+                                    </button>
                                 </div>
                             )}
                         </div>

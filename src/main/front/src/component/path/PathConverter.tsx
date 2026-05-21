@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DayPicker } from "react-day-picker";
 import { ko } from "date-fns/locale/ko";
 import "react-day-picker/style.css";
@@ -7,9 +7,11 @@ import Swal from "sweetalert2";
 import { Site } from "../../api/sites";
 import { localApi } from "../../api/http";
 import { styles } from "../../styles/PathConverterStyles";
+import VirtualCheckList, { VirtualCheckListItem } from "./VirtualCheckList";
 
 interface Props {
     site: Site;
+    suspendScrollbars?: boolean;
 }
 
 export type RepoVersionOption = {
@@ -79,7 +81,7 @@ const vcsTypeLabels: Record<string, string> = {
     UNKNOWN: "알 수 없음",
 };
 
-const PathConverter: React.FC<Props> = ({ site }) => {
+const PathConverter: React.FC<Props> = ({ site, suspendScrollbars = false }) => {
     const [startDate, setStartDate] = useState<Date | null>(null);
     const [endDate, setEndDate] = useState<Date | null>(null);
     const [activeDatePicker, setActiveDatePicker] = useState<ActiveDatePicker>(null);
@@ -106,17 +108,32 @@ const PathConverter: React.FC<Props> = ({ site }) => {
     const hasFileQuery = isLocalMode ? Boolean(startDate && endDate) : selectedVersions.length > 0;
     const displayVcsType = vcsTypeLabels[vcsType] ?? vcsType;
 
-    const duplicatePathSet = new Set(duplicateFiles.map((item) => item.path));
-    const selectedDuplicateFiles = duplicateFiles.filter((item) => selectedFiles.includes(item.path));
+    const selectedVersionSet = useMemo(() => new Set(selectedVersions), [selectedVersions]);
+    const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
+    const duplicatePathSet = useMemo(() => new Set(duplicateFiles.map((item) => item.path)), [duplicateFiles]);
+    const selectedDuplicateFiles = useMemo(
+        () => duplicateFiles.filter((item) => selectedFileSet.has(item.path)),
+        [duplicateFiles, selectedFileSet]
+    );
     const normalizedDuplicateSearch = duplicateSearch.trim().toLowerCase();
-    const duplicateBulkVersionOptions = collectUniqueDuplicateVersions(selectedDuplicateFiles);
-    const duplicateFilesByFilter = selectedDuplicateFiles.filter((item) => {
-        if (normalizedDuplicateSearch && !item.path.toLowerCase().includes(normalizedDuplicateSearch)) return false;
-        return true;
-    });
-    const unresolvedDuplicateCount = duplicateFilesByFilter.filter(
-        (item) => !duplicateFileVersionMap[item.path]
-    ).length;
+    const duplicateBulkVersionOptions = useMemo(
+        () => collectUniqueDuplicateVersions(selectedDuplicateFiles),
+        [selectedDuplicateFiles]
+    );
+    const duplicateFilesByFilter = useMemo(
+        () =>
+            selectedDuplicateFiles.filter((item) => {
+                if (normalizedDuplicateSearch && !item.path.toLowerCase().includes(normalizedDuplicateSearch)) {
+                    return false;
+                }
+                return true;
+            }),
+        [normalizedDuplicateSearch, selectedDuplicateFiles]
+    );
+    const unresolvedDuplicateCount = useMemo(
+        () => duplicateFilesByFilter.filter((item) => !duplicateFileVersionMap[item.path]).length,
+        [duplicateFilesByFilter, duplicateFileVersionMap]
+    );
 
     useEffect(() => {
         if (!activeDatePicker) return;
@@ -409,17 +426,17 @@ const PathConverter: React.FC<Props> = ({ site }) => {
         return true;
     };
 
-    const toggleVersion = (value: string) => {
+    const toggleVersion = useCallback((value: string) => {
         setSelectedVersions((prev) =>
             prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
         );
-    };
+    }, []);
 
-    const toggleFile = (value: string) => {
+    const toggleFile = useCallback((value: string) => {
         setSelectedFiles((prev) =>
             prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
         );
-    };
+    }, []);
 
     const applyBulkDuplicateVersion = () => {
         if (!bulkDuplicateVersion) return;
@@ -480,6 +497,7 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                 "/api/git/extraction/save",
                 {
                     siteId: site.id,
+                    siteName: site.text,
                     since: startDate ? toLocalDateText(startDate) : null,
                     until: endDate ? toLocalDateText(endDate) : null,
                     localPath: site.localPath,
@@ -570,10 +588,38 @@ const PathConverter: React.FC<Props> = ({ site }) => {
 
     const activePickerDate = activeDatePicker === "start" ? startDate : endDate;
     const activePickerDefaultMonth = activePickerDate ?? startDate ?? endDate ?? new Date();
+    const versionCheckItems = useMemo<VirtualCheckListItem[]>(
+        () =>
+            versionOptions.map((option) => ({
+                key: option.value,
+                label: option.label,
+                checked: selectedVersionSet.has(option.value),
+                onToggle: () => toggleVersion(option.value),
+            })),
+        [selectedVersionSet, toggleVersion, versionOptions]
+    );
+    const fileCheckItems = useMemo<VirtualCheckListItem[]>(
+        () =>
+            versionFiles.map((file) => ({
+                key: file,
+                label: file,
+                checked: selectedFileSet.has(file),
+                badge: duplicatePathSet.has(file) ? "중복" : undefined,
+                onToggle: () => toggleFile(file),
+            })),
+        [duplicatePathSet, selectedFileSet, toggleFile, versionFiles]
+    );
 
-    const checkListBoxStyle = isDuplicateModalOpen || isExtracting
+    const suspendListScroll = isDuplicateModalOpen || isExtracting || suspendScrollbars;
+    const checkListBoxStyle = suspendListScroll
         ? { ...styles.checkListBox, overflowY: "hidden" as const }
         : styles.checkListBox;
+    const renderEmptyState = (title: string, description: string) => (
+        <div style={styles.emptyState}>
+            <div style={styles.emptyStateTitle}>{title}</div>
+            <div style={styles.emptyStateDescription}>{description}</div>
+        </div>
+    );
 
     return (
         <div style={styles.customCardSingle}>
@@ -665,27 +711,27 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                                     </div>
                                 </div>
 
-                                <div style={checkListBoxStyle}>
-                                    {isLoadingVersions && <div style={styles.emptyText}>버전 목록을 불러오는 중입니다.</div>}
-                                    {!isLoadingVersions && versionOptions.length === 0 && (
-                                        <div style={styles.emptyText}>선택한 날짜 범위에 해당하는 버전이 없습니다.</div>
-                                    )}
-                                    {!isLoadingVersions &&
-                                        versionOptions.map((option) => (
-                                            <label
-                                                key={option.value}
-                                                style={selectedVersions.includes(option.value) ? styles.checkRowActive : styles.checkRow}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    style={styles.checkInput}
-                                                    checked={selectedVersions.includes(option.value)}
-                                                    onChange={() => toggleVersion(option.value)}
-                                                />
-                                                <span style={styles.checkText}>{option.label}</span>
-                                            </label>
-                                        ))}
-                                </div>
+                                {isLoadingVersions || versionCheckItems.length === 0 ? (
+                                    <div style={checkListBoxStyle}>
+                                        {isLoadingVersions &&
+                                            renderEmptyState("버전 목록 조회 중", "선택한 기간의 Git commit 또는 SVN revision을 불러오고 있습니다.")}
+                                        {!isLoadingVersions && (!startDate || !endDate) &&
+                                            renderEmptyState("날짜를 선택해 주세요", "시작일과 종료일을 지정하면 변경 이력이 있는 버전을 조회합니다.")}
+                                        {!isLoadingVersions && startDate && endDate && (
+                                            renderEmptyState("조회된 버전이 없습니다", "기간을 넓히거나 선택한 프로젝트 경로를 확인해 주세요.")
+                                        )}
+                                    </div>
+                                ) : (
+                                    <VirtualCheckList
+                                        items={versionCheckItems}
+                                        listStyle={styles.checkListBox}
+                                        rowStyle={styles.checkRow}
+                                        activeRowStyle={styles.checkRowActive}
+                                        inputStyle={styles.checkInput}
+                                        textStyle={styles.checkText}
+                                        suspendScroll={suspendListScroll}
+                                    />
+                                )}
                             </div>
                         )}
 
@@ -712,42 +758,39 @@ const PathConverter: React.FC<Props> = ({ site }) => {
                                 </div>
                             </div>
 
-                            <div style={checkListBoxStyle}>
-                                {!isLocalMode && selectedVersions.length === 0 && (
-                                    <div style={styles.emptyText}>버전을 선택하면 변경 파일을 표시합니다.</div>
-                                )}
-                                {hasFileQuery && isLoadingFiles && (
-                                    <div style={styles.emptyText}>
-                                        {isLocalMode
-                                            ? "선택한 날짜 범위의 수정 파일을 불러오는 중입니다."
-                                            : "변경 파일 목록을 불러오는 중입니다."}
-                                    </div>
-                                )}
-                                {hasFileQuery && !isLoadingFiles && versionFiles.length === 0 && (
-                                    <div style={styles.emptyText}>
-                                        {isLocalMode
-                                            ? "선택한 날짜 범위에 해당하는 파일이 없습니다."
-                                            : "선택한 버전에 해당하는 변경 파일이 없습니다."}
-                                    </div>
-                                )}
-                                {hasFileQuery &&
-                                    !isLoadingFiles &&
-                                    versionFiles.map((file) => (
-                                        <label
-                                            key={file}
-                                            style={selectedFiles.includes(file) ? styles.checkRowActive : styles.checkRow}
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                style={styles.checkInput}
-                                                checked={selectedFiles.includes(file)}
-                                                onChange={() => toggleFile(file)}
-                                            />
-                                            <span style={styles.checkText}>{file}</span>
-                                            {duplicatePathSet.has(file) && <span style={styles.duplicateBadge}>중복</span>}
-                                        </label>
-                                    ))}
-                            </div>
+                            {!hasFileQuery || isLoadingFiles || fileCheckItems.length === 0 ? (
+                                <div style={checkListBoxStyle}>
+                                    {!isLocalMode && selectedVersions.length === 0 &&
+                                        renderEmptyState("버전을 선택해 주세요", "선택한 버전에 포함된 변경 파일을 이 영역에 표시합니다.")}
+                                    {hasFileQuery && isLoadingFiles && (
+                                        renderEmptyState(
+                                            "파일 목록 조회 중",
+                                            isLocalMode
+                                                ? "선택한 날짜 범위의 수정 파일을 불러오고 있습니다."
+                                                : "선택한 버전의 변경 파일을 불러오고 있습니다."
+                                        )
+                                    )}
+                                    {hasFileQuery && !isLoadingFiles && versionFiles.length === 0 && (
+                                        renderEmptyState(
+                                            "조회된 파일이 없습니다",
+                                            isLocalMode
+                                                ? "기간을 넓히거나 로컬 프로젝트 경로를 확인해 주세요."
+                                                : "다른 버전을 선택하거나 저장소 상태를 확인해 주세요."
+                                        )
+                                    )}
+                                </div>
+                            ) : (
+                                <VirtualCheckList
+                                    items={fileCheckItems}
+                                    listStyle={styles.checkListBox}
+                                    rowStyle={styles.checkRow}
+                                    activeRowStyle={styles.checkRowActive}
+                                    inputStyle={styles.checkInput}
+                                    textStyle={styles.checkText}
+                                    badgeStyle={styles.duplicateBadge}
+                                    suspendScroll={suspendListScroll}
+                                />
+                            )}
                         </div>
                     </div>
                 </div>

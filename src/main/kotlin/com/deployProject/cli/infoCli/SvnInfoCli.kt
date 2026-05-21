@@ -16,6 +16,8 @@ import org.tmatesoft.svn.core.wc.SVNWCUtil
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Date
@@ -345,55 +347,64 @@ class SvnInfoCli {
             .groupBy({ it.value }, { it.key })
             .forEach { (revisionText, paths) ->
                 val revisionNo = revisionText.toLongOrNull() ?: return@forEach
+                val sourcePaths = paths.filter(::isJvmSourcePath)
+                val rawPaths = paths.filterNot(::isJvmSourcePath)
+
+                GitUtil.logExtractionPhase(log, "svn.write-revision-raw-files[$revisionText]") {
+                    rawPaths.forEach { path ->
+                        val fileBytes = readFileBytesAtRevision(client, rootUrl, path, revisionNo)
+                        if (fileBytes != null) {
+                            GitUtil.writeBinaryOutputFile(outputDir, path, fileBytes)
+                            writtenEntries.add(path)
+                        } else {
+                            log.warn("SVN revision file not found: revision={}, path={}", revisionText, path)
+                            System.err.println("[WARN] SVN revision file not found: revision=$revisionText, path=$path")
+                        }
+                    }
+                }
+
+                if (sourcePaths.isEmpty()) return@forEach
+
                 val snapshotDir = Files.createTempDirectory("deploy-svn-revision-").toFile()
+                val fastCompileClasspath = collectFastRevisionClasspath(workTree)
                 try {
-                    GitUtil.logExtractionPhase(log, "svn.export-revision-snapshot[$revisionText]") {
-                        exportRevisionSnapshot(client, rootUrl, revisionNo, snapshotDir)
-                    }
+                    runCatching {
+                        GitUtil.logExtractionPhase(log, "svn.prepare-revision-compile-workspace[$revisionText]") {
+                            prepareRevisionCompileWorkspace(client, rootUrl, workTree, revisionNo, snapshotDir, sourcePaths)
+                        }
 
-                    val sourcePaths = paths.filter(::isJvmSourcePath)
-                    val rawPaths = paths.filterNot(::isJvmSourcePath)
+                        compileAndCopyRevisionArtifacts(
+                            outputDir,
+                            snapshotDir,
+                            revisionText,
+                            sourcePaths,
+                            jdkPath,
+                            writtenEntries,
+                            fastCompileClasspath
+                        )
+                    }.getOrElse { error ->
+                        log.warn(
+                            "Fast SVN compile workspace failed. Falling back to full revision export: revision={}, error={}",
+                            revisionText,
+                            error.message
+                        )
 
-                    if (rawPaths.isNotEmpty()) {
-                        val rawEntries = GitUtil.logExtractionPhase(log, "svn.collect-revision-raw-entries[$revisionText]") {
-                            GitUtil.addZipEntryName(snapshotDir, rawPaths).toList()
-                        }
-                        GitUtil.logExtractionPhase(log, "svn.copy-revision-raw-files[$revisionText]") {
-                            GitUtil.addDirectoryEntry(outputDir, snapshotDir, rawPaths)
-                        }
-                        writtenEntries.addAll(rawEntries)
-                    }
+                        snapshotDir.deleteRecursively()
+                        snapshotDir.mkdirs()
 
-                    if (sourcePaths.isNotEmpty()) {
-                        GitUtil.logExtractionPhase(log, "svn.compile-revision-jvm[$revisionText]") {
-                            GitUtil.compileJvmProject(snapshotDir, jdkPath, sourcePaths)
+                        GitUtil.logExtractionPhase(log, "svn.export-revision-snapshot[$revisionText]") {
+                            exportRevisionSnapshot(client, rootUrl, revisionNo, snapshotDir)
                         }
-                        GitUtil.logExtractionPhase(log, "svn.build-revision-class-map[$revisionText]") {
-                            GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
-                        }
-                        val mappedEntries = GitUtil.mapPathsForExtraction(sourcePaths, GitUtil.ArtifactProfile.JVM_CLASS_ONLY)
-                        val actualEntries = GitUtil.logExtractionPhase(log, "svn.collect-revision-artifact-entries[$revisionText]") {
-                            GitUtil.addZipEntryName(
-                                baseDir = snapshotDir,
-                                paths = mappedEntries,
-                                allowBuildArtifacts = true
-                            ).toList()
-                        }
-                        if (actualEntries.isEmpty()) {
-                            System.err.println(
-                                "[WARN] No SVN class artifacts copied: revision=$revisionText, " +
-                                    "sources=${sourcePaths.joinToString(",")}, mapped=${mappedEntries.joinToString(",")}"
-                            )
-                        }
-                        GitUtil.logExtractionPhase(log, "svn.copy-revision-artifacts[$revisionText]") {
-                            GitUtil.addDirectoryEntry(
-                                targetDir = outputDir,
-                                baseDir = snapshotDir,
-                                paths = mappedEntries,
-                                allowBuildArtifacts = true
-                            )
-                        }
-                        writtenEntries.addAll(actualEntries)
+
+                        compileAndCopyRevisionArtifacts(
+                            outputDir,
+                            snapshotDir,
+                            revisionText,
+                            sourcePaths,
+                            jdkPath,
+                            writtenEntries,
+                            fastCompileClasspath
+                        )
                     }
                 } finally {
                     snapshotDir.deleteRecursively()
@@ -401,6 +412,101 @@ class SvnInfoCli {
             }
 
         return writtenEntries.toList()
+    }
+
+    private fun compileAndCopyRevisionArtifacts(
+        outputDir: File,
+        snapshotDir: File,
+        revisionText: String,
+        sourcePaths: List<String>,
+        jdkPath: String?,
+        writtenEntries: MutableSet<String>,
+        additionalClasspathEntries: List<Path> = emptyList()
+    ) {
+        GitUtil.logExtractionPhase(log, "svn.compile-revision-jvm[$revisionText]") {
+            GitUtil.compileJvmProject(snapshotDir, jdkPath, sourcePaths, additionalClasspathEntries)
+        }
+        GitUtil.logExtractionPhase(log, "svn.build-revision-class-map[$revisionText]") {
+            GitUtil.buildLatestClassMap(snapshotDir, sourcePaths)
+        }
+        val mappedEntries = GitUtil.mapPathsForExtraction(sourcePaths, GitUtil.ArtifactProfile.JVM_CLASS_ONLY)
+        val actualEntries = GitUtil.logExtractionPhase(log, "svn.collect-revision-artifact-entries[$revisionText]") {
+            GitUtil.addZipEntryName(
+                baseDir = snapshotDir,
+                paths = mappedEntries,
+                allowBuildArtifacts = true
+            ).toList()
+        }
+        if (actualEntries.isEmpty()) {
+            System.err.println(
+                "[WARN] No SVN class artifacts copied: revision=$revisionText, " +
+                    "sources=${sourcePaths.joinToString(",")}, mapped=${mappedEntries.joinToString(",")}"
+            )
+        }
+        GitUtil.logExtractionPhase(log, "svn.copy-revision-artifacts[$revisionText]") {
+            GitUtil.addDirectoryEntry(
+                targetDir = outputDir,
+                baseDir = snapshotDir,
+                paths = mappedEntries,
+                allowBuildArtifacts = true
+            )
+        }
+        writtenEntries.addAll(actualEntries)
+    }
+
+    private fun prepareRevisionCompileWorkspace(
+        client: SVNClientManager,
+        rootUrl: SVNURL,
+        workTree: File,
+        revisionNo: Long,
+        targetDir: File,
+        sourcePaths: List<String>
+    ) {
+        Files.createDirectories(targetDir.toPath())
+        copyCompileWorkspaceInputs(workTree.toPath(), targetDir.toPath())
+
+        sourcePaths.forEach { path ->
+            val fileBytes = readFileBytesAtRevision(client, rootUrl, path, revisionNo)
+                ?: error("SVN revision source file not found: revision=$revisionNo, path=$path")
+            GitUtil.writeBinaryOutputFile(targetDir, path, fileBytes)
+        }
+    }
+
+    private fun copyCompileWorkspaceInputs(sourceRoot: Path, targetRoot: Path) {
+        COMPILE_ROOT_FILES.forEach { relativePath ->
+            copyWorkspacePath(sourceRoot, targetRoot, relativePath)
+        }
+        COMPILE_INPUT_DIRECTORIES.forEach { relativePath ->
+            copyWorkspacePath(sourceRoot, targetRoot, relativePath)
+        }
+    }
+
+    private fun collectFastRevisionClasspath(workTree: File): List<Path> {
+        val basePath = workTree.toPath().toAbsolutePath().normalize()
+        return FAST_REVISION_CLASSPATH_DIRECTORIES
+            .map { basePath.resolve(it).normalize() }
+            .filter { Files.exists(it) }
+            .distinctBy { it.toAbsolutePath().normalize().toString().lowercase() }
+    }
+
+    private fun copyWorkspacePath(sourceRoot: Path, targetRoot: Path, relativePath: String) {
+        val relative = Path.of(relativePath)
+        val source = sourceRoot.resolve(relative).normalize()
+        if (!Files.exists(source)) return
+
+        val target = targetRoot.resolve(relative).normalize()
+        if (Files.isDirectory(source)) {
+            Files.walk(source).use { stream ->
+                stream.filter(Files::isRegularFile).forEach { sourceFile ->
+                    val targetFile = target.resolve(source.relativize(sourceFile)).normalize()
+                    Files.createDirectories(targetFile.parent)
+                    Files.copy(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
+                }
+            }
+        } else if (Files.isRegularFile(source)) {
+            Files.createDirectories(target.parent)
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
+        }
     }
 
     private fun resolveWorkingCopyInfo(client: SVNClientManager, workTree: File): WorkingCopyInfo? {
@@ -474,4 +580,37 @@ class SvnInfoCli {
 
     private fun isJvmSourcePath(path: String): Boolean =
         path.endsWith(".java", ignoreCase = true) || path.endsWith(".kt", ignoreCase = true)
+
+    companion object {
+        private val COMPILE_ROOT_FILES = listOf(
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+            "gradle.properties",
+            ".java-version"
+        )
+
+        private val COMPILE_INPUT_DIRECTORIES = listOf(
+            "lib",
+            "libs",
+            "WEB-INF/lib",
+            "WebContent/WEB-INF/lib",
+            "webapp/WEB-INF/lib",
+            "target/dependency"
+        )
+
+        private val FAST_REVISION_CLASSPATH_DIRECTORIES = listOf(
+            "target/classes",
+            "build/classes",
+            "build/classes/java/main",
+            "build/classes/kotlin/main",
+            "out/production",
+            "WEB-INF/classes",
+            "WebContent/WEB-INF/classes",
+            "src/main/webapp/WEB-INF/classes",
+            "webapp/WEB-INF/classes"
+        )
+    }
 }

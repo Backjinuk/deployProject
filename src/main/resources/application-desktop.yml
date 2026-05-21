@@ -12,7 +12,7 @@ spring:
 deploy:
   desktop:
     open-browser: true
-    window-mode: ${DEPLOY_PROJECT_WINDOW_MODE:native}
+    window-mode: ${DEPLOY_PROJECT_WINDOW_MODE:${DEPLOY_DESKTOP_WINDOW_MODE:swt-edge}}
   client:
     ui-mode: ${DEPLOY_PROJECT_UI_MODE:APP}
     installer-download-url: ${DEPLOY_PROJECT_INSTALLER_DOWNLOAD_URL:}

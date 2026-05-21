@@ -31,6 +31,9 @@ deploy:
     installer-file-name: ${DEPLOY_PROJECT_INSTALLER_FILE_NAME:}
   storage:
     sites-file: ${DEPLOY_PROJECT_SITES_FILE:}
+  desktop:
+    open-browser: ${DEPLOY_DESKTOP_OPEN_BROWSER:true}
+    window-mode: ${DEPLOY_DESKTOP_WINDOW_MODE:swt-edge}
 
 fgivpnT5008:
   iptime:

@@ -84,7 +84,28 @@ const INTRO_GUIDE_ANIMATION_CSS = `
 
 const slides: Slide[] = [
     {
-        eyebrow: "1. 경로 준비",
+        eyebrow: "1. 메뉴 위치",
+        title: "오른쪽 위 메뉴와 하단 문의하기를 먼저 확인합니다",
+        summary:
+            "상단 오른쪽 메뉴에서 경로 등록, 경로 관리, 경로 다운로드, 경로 가져오기, 에러 로그 추출을 실행하고 하단 문의하기에서 GitHub, Email, 에러 로그 추출을 사용할 수 있습니다.",
+        images: [
+            { src: guideMainEmpty, caption: "상단 오른쪽 메뉴 위치" },
+            { src: guideMainEmpty, caption: "하단 문의하기 위치" },
+        ],
+        nodes: [
+            {
+                title: "상단 오른쪽 메뉴",
+                text: "햄버거 버튼에서 경로 등록, 경로 관리, 경로 다운로드, 경로 가져오기, 에러 로그 추출을 실행합니다.",
+            },
+            {
+                title: "하단 문의하기",
+                text: "버전 정보 옆 문의하기에서 GitHub, Email, 에러 로그 추출을 사용할 수 있습니다.",
+            },
+        ],
+        note: "오류 문의 시 문의하기에서 에러 로그 추출 후 생성된 ZIP 파일을 함께 보내주시면 신속하게 확인할 수 있습니다.",
+    },
+    {
+        eyebrow: "2. 경로 준비",
         title: "배포 경로를 등록하거나 파일에서 가져옵니다",
         summary:
             "처음 실행하면 사이트별로 사용할 서버 ROOT 경로, 로컬 프로젝트 경로, JDK 경로를 등록합니다. 백업해 둔 JSON 파일이 있다면 경로 가져오기로 한 번에 등록할 수 있습니다.",
@@ -105,7 +126,7 @@ const slides: Slide[] = [
         note: "등록한 경로는 이 PC의 로컬 파일에 저장됩니다. 경로 등록 후 목록에서 패키지를 만들 대상을 선택합니다.",
     },
     {
-        eyebrow: "2. 대상/날짜 선택",
+        eyebrow: "3. 대상/날짜 선택",
         title: "배포 대상을 선택하고 조회 기간을 지정합니다",
         summary:
             "배포할 사이트를 선택하면 기본 화면으로 이동합니다. 여기서 변경 파일을 찾을 시작일과 종료일을 선택합니다.",
@@ -126,7 +147,7 @@ const slides: Slide[] = [
         note: "Git/SVN을 쓰지 않는 LOCAL 프로젝트는 버전 선택 없이 파일 최종 수정 시간 기준으로 조회됩니다.",
     },
     {
-        eyebrow: "3. 버전/파일 확정",
+        eyebrow: "4. 버전/파일 확정",
         title: "버전과 파일을 선택하고 중복 파일을 정리합니다",
         summary:
             "Git/SVN 프로젝트는 조회된 버전을 선택한 뒤 변경 파일을 불러옵니다. 같은 파일이 여러 버전에 있으면 중복 파일 버전 선택 모달에서 최종 버전을 확정합니다.",
@@ -152,7 +173,7 @@ const slides: Slide[] = [
         note: "중복 파일이 없으면 중복 선택 단계는 건너뛰고 바로 추출이 진행됩니다.",
     },
     {
-        eyebrow: "4. 웹 추출 실행",
+        eyebrow: "5. 웹 추출 실행",
         title: "추출하기 버튼을 눌러 최종 패키지를 다운로드합니다",
         summary:
             "파일 선택이 끝나면 추출하기 버튼을 클릭합니다. 웹 화면에서 추출 진행 상태를 확인하고, 완료되면 deploy-package-windows.zip 파일을 다운로드합니다.",
@@ -178,7 +199,7 @@ const slides: Slide[] = [
         note: "다운로드된 압축 파일 안에는 이미 최종 패키지 파일과 patch.sh가 들어 있습니다. 별도 실행 파일을 다시 실행하지 않습니다.",
     },
     {
-        eyebrow: "5. 패키지 확인",
+        eyebrow: "6. 패키지 확인",
         title: "압축을 풀고 최종 패키지 구성을 확인합니다",
         summary:
             "다운로드한 deploy-package-windows.zip을 압축 해제하면 변경 파일과 patch.sh가 바로 보입니다. 이 폴더 전체가 서버로 옮길 최종 패키지입니다.",
@@ -199,7 +220,7 @@ const slides: Slide[] = [
         note: "압축 해제한 폴더 전체를 배포 서버로 옮기면 됩니다. 이후 서버에서 patch.sh를 실행해 백업과 배포를 진행합니다.",
     },
     {
-        eyebrow: "6. 서버 배포",
+        eyebrow: "7. 서버 배포",
         title: "서버에서 patch.sh를 실행해 백업과 배포를 진행합니다",
         summary:
             "생성된 결과 폴더를 서버에 올린 뒤 해당 폴더에서 bash patch.sh를 실행합니다. 메뉴에서 Backup, Deploy, Recover 중 필요한 작업을 선택합니다.",
@@ -217,7 +238,7 @@ const slides: Slide[] = [
                 text: "배포 전 Backup을 먼저 수행하고, 필요 시 Deploy 또는 Recover를 선택합니다.",
             },
         ],
-        note: "실행 권한이 없어도 ./patch.sh 대신 bash patch.sh로 실행하면 됩니다. Backup은 운영 파일을 timestamp 기준으로 여러 번 보관합니다.",
+        note: "실행 권한이 없어도 ./patch.sh 대신 bash patch.sh로 실행하면 됩니다. Backup은 운영 파일을 timestamp 기준으로 여러 번 보관합니다. 문제가 발생하면 하단 문의하기에서 에러 로그 추출 후 생성된 ZIP 파일을 보내주시면 신속하게 확인할 수 있습니다.",
     },
 ];
 

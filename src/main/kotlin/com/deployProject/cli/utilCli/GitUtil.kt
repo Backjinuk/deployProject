@@ -15,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.PathMatcher
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.text.SimpleDateFormat
 import java.time.LocalDate
@@ -59,6 +60,7 @@ object GitUtil {
     private val zippedEntries = mutableSetOf<String>()
     private val zippedEntriesPath = mutableSetOf<String>()
     private var statusClassMap: Map<String, List<String>> = emptyMap()
+    private val compileSupportJars = listOf("javax.servlet-api-3.1.0.jar")
 
     private data class SourceInfo(
         val aliases: Set<String>,
@@ -287,7 +289,8 @@ object GitUtil {
     fun compileJvmProject(
         workTree: File,
         javaHomeOverride: String? = null,
-        sourcePaths: List<String> = emptyList()
+        sourcePaths: List<String> = emptyList(),
+        additionalClasspathEntries: List<Path> = emptyList()
     ) {
         val configuredJavaHome = resolveConfiguredJavaHome(javaHomeOverride)
         val inspectedJavaSpec = ProjectJavaInspector.inspect(workTree)
@@ -308,7 +311,14 @@ object GitUtil {
                 )
             }
 
-            compileJvmProjectWithDirectJdk(workTree, configuredJavaHome, targetJavaVersion, detectedFrom, sourcePaths)
+            compileJvmProjectWithDirectJdk(
+                workTree,
+                configuredJavaHome,
+                targetJavaVersion,
+                detectedFrom,
+                sourcePaths,
+                additionalClasspathEntries
+            )
             verifyCompiledClasses(workTree, targetJavaVersion)
             return
         }
@@ -371,7 +381,8 @@ object GitUtil {
         javaHome: Path,
         targetJavaVersion: Int,
         detectedFrom: String,
-        sourcePaths: List<String>
+        sourcePaths: List<String>,
+        additionalClasspathEntries: List<Path>
     ) {
         val basePath = workTree.toPath().toAbsolutePath().normalize()
         val actualJavaVersion = readJavaMajorVersion(javaHome)
@@ -393,7 +404,7 @@ object GitUtil {
 
         val outputDir = determineDirectCompileOutputDir(basePath)
         resetDirectory(outputDir)
-        val classpathEntries = collectLocalCompileClasspath(basePath, outputDir)
+        val classpathEntries = collectLocalCompileClasspath(basePath, outputDir, additionalClasspathEntries)
         val sourcepathEntries = collectDirectJavaSourceRoots(basePath)
         val javac = javaHome.resolve("bin").resolve(javacExecutableName())
         require(Files.isRegularFile(javac)) { "Configured JDK does not contain javac: $javac" }
@@ -1018,7 +1029,11 @@ object GitUtil {
         }
     }
 
-    private fun collectLocalCompileClasspath(basePath: Path, outputDir: Path): List<Path> {
+    private fun collectLocalCompileClasspath(
+        basePath: Path,
+        outputDir: Path,
+        additionalClasspathEntries: List<Path> = emptyList()
+    ): List<Path> {
         val jarRoots = listOf(
             basePath.resolve("src").resolve("main").resolve("webapp").resolve("WEB-INF").resolve("lib"),
             basePath.resolve("WebContent").resolve("WEB-INF").resolve("lib"),
@@ -1042,8 +1057,32 @@ object GitUtil {
 
         return buildList {
             add(outputDir)
+            addAll(additionalClasspathEntries.filter { Files.exists(it) })
             addAll(jars)
-        }.distinct()
+            addAll(extractBundledCompileSupportJars())
+        }.distinctBy { it.toAbsolutePath().normalize().toString().lowercase() }
+    }
+
+    private fun extractBundledCompileSupportJars(): List<Path> {
+        return compileSupportJars.mapNotNull { fileName ->
+            val resourcePath = "compile-libs/$fileName"
+            val outputDir = File(
+                System.getProperty("user.home"),
+                ".deploy-project/runtime/compile-libs"
+            ).toPath()
+            val outputFile = outputDir.resolve(fileName)
+
+            runCatching {
+                val resource = GitUtil::class.java.classLoader.getResourceAsStream(resourcePath) ?: return@mapNotNull null
+                Files.createDirectories(outputDir)
+                resource.use {
+                    Files.copy(it, outputFile, StandardCopyOption.REPLACE_EXISTING)
+                }
+                outputFile
+            }.onFailure { error ->
+                log.warn("Failed to extract compile support jar: {}", resourcePath, error)
+            }.getOrNull()
+        }
     }
 
     private fun createJavacSourcesArgFile(basePath: Path, javaSources: List<Path>): Path {
